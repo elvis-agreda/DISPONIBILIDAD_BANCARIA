@@ -1,7 +1,19 @@
 import re
 from collections import defaultdict
 from datetime import datetime, timezone
+from .common import sap_date_to_python
+from .conciliation.transferencias import procesar_transferencias_y_divisas
+from .conciliation.comisiones import procesar_comisiones_bancarias
+from .conciliation.ingresos import procesar_ingresos_bancarios
+from .conciliation.gastos import conciliar_cadena_zr_zp_facturas
 
+__all__ = [
+    "sap_date_to_python",
+    "procesar_transferencias_y_divisas",
+    "procesar_comisiones_bancarias",
+    "procesar_ingresos_bancarios",
+    "conciliar_cadena_zr_zp_facturas"
+]
 
 def sap_date_to_python(sap_date_str):
     if not sap_date_str:
@@ -22,17 +34,6 @@ def _clean_ref(texto):
         return ""
     return re.sub(r"[^A-Z0-9]", "", str(texto).upper())
 
-
-# ── SE AGREGÓ LA CUENTA 213011100 ──
-CUENTAS_IMPUESTOS = {
-    "117010100",
-    "213010500",
-    "213010600",
-    "213011100",
-    "525010103",
-    "525010104",
-}
-CUENTAS_DIF_CAMBIO = {"411050117", "526010102"}
 
 
 def procesar_transferencias_y_divisas(posiciones, cuentas_todas):
@@ -181,11 +182,11 @@ def procesar_transferencias_y_divisas(posiciones, cuentas_todas):
     return operaciones, restantes
 
 
-def procesar_comisiones_bancarias(posiciones, mapa_banco_real):
+def procesar_comisiones_bancarias(posiciones, mapa_banco_real, cuentas_comision):
     zrs_con_comision = {
         p.partida.belnr
         for p in posiciones
-        if p.partida.blart == "ZR" and p.ractt == "525010103"
+        if p.partida.blart == "ZR" and p.ractt in cuentas_comision
     }
 
     comisiones = []
@@ -198,10 +199,10 @@ def procesar_comisiones_bancarias(posiciones, mapa_banco_real):
 
     for belnr, pos_list in pos_por_doc.items():
         pos_comision = next(
-            (p for p in pos_list if p.ractt == "525010103" and float(p.wsl) > 0), None
+            (p for p in pos_list if p.ractt in cuentas_comision and float(p.wsl) > 0), None
         )
         if not pos_comision:
-            pos_comision = next((p for p in pos_list if p.ractt == "525010103"), None)
+            pos_comision = next((p for p in pos_list if p.ractt in cuentas_comision), None)
 
         if pos_comision:
             cuenta_banco = mapa_banco_real.get(belnr, "")
@@ -226,6 +227,8 @@ def procesar_comisiones_bancarias(posiciones, mapa_banco_real):
 
 def _distribuir_impuesto_en_gastos(
     posiciones_factura: list,
+    cuentas_impuestos: set, 
+    cuentas_dif_cambio: set
 ) -> tuple[list[dict], str, str, float]:
     gastos = []
     impuestos = []
@@ -312,6 +315,8 @@ def conciliar_cadena_zr_zp_facturas(
     balde_solo_zrs,
     facturas_agrupadas: dict,
     mapa_factura_zp: dict,
+    cuentas_impuestos: set,
+    cuentas_dif_cambio: set
 ) -> tuple[list, list, list]:
     zrs_usados = set()
     zps_usados = set()
@@ -526,7 +531,7 @@ def conciliar_cadena_zr_zp_facturas(
                 gran_total_facturas_abs += abs(float(lineas_banco_zp[0].wsl))
             else:
                 lineas, prov, cli, suma_fac = _distribuir_impuesto_en_gastos(
-                    posiciones_globales
+                    posiciones_globales, cuentas_impuestos, cuentas_dif_cambio
                 )
                 gran_total_facturas_abs += suma_fac
                 refs_facturas = ",".join(externas) if externas else ""

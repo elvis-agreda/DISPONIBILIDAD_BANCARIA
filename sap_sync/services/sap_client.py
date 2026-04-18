@@ -17,7 +17,7 @@ from requests.auth import HTTPBasicAuth
 USERNAME = settings.SAP_USERNAME
 PASSWORD = settings.SAP_PASSWORD
 AMBIENTE_SAP = settings.SAP_AMBIENTE
-URL_BASE = settings.SAP_URL_BASE
+URL_BASE = settings.SAP_URL
 SAP_PORT = settings.SAP_PORT
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)

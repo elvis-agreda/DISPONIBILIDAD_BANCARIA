@@ -304,3 +304,22 @@ class TasaBCV(models.Model):
 
     def __str__(self):
         return f"{self.fecha} | {self.moneda}: {self.tasa}"
+
+class CuentaConfiguracion(models.Model):
+    TIPO_CHOICES = [
+        ('IMPUESTO', 'Cuenta de Impuestos'),
+        ('DIF_CAMBIO', 'Diferencia en Cambio'),
+        ('COMISION', 'Comisión Bancaria'),
+    ]
+    
+    cuenta = models.CharField("Cuenta Contable", max_length=20, unique=True)
+    tipo = models.CharField("Tipo de Cuenta", max_length=20, choices=TIPO_CHOICES)
+    descripcion = models.CharField("Descripción / Nombre", max_length=255, blank=True, null=True)
+    activa = models.BooleanField("Activa", default=True, help_text="Desmarca para ignorar esta cuenta sin borrarla.")
+
+    class Meta:
+        verbose_name = "Configuración de Cuenta"
+        verbose_name_plural = "Configuración de Cuentas"
+
+    def __str__(self):
+        return f"{self.cuenta} - {self.get_tipo_display()}"

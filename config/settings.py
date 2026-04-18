@@ -22,6 +22,17 @@ env = environ.Env(DEBUG=(bool, False))
 
 environ.Env.read_env(os.path.join(BASE_DIR, ".env"))
 
+# --- TUNING DE RENDIMIENTO SAP SYNC ---
+# Si la variable no existe en el .env, toma un valor por defecto seguro.
+
+SAP_MAX_WORKERS_DEFAULT = int(os.environ.get("SAP_MAX_WORKERS_DEFAULT", 4))
+SAP_MAX_WORKERS_HEAVY = int(os.environ.get("SAP_MAX_WORKERS_HEAVY", 8))
+
+DB_BATCH_SIZE_LARGE = int(os.environ.get("DB_BATCH_SIZE_LARGE", 2000))
+DB_BATCH_SIZE_MEDIUM = int(os.environ.get("DB_BATCH_SIZE_MEDIUM", 1000))
+
+ODATA_CHUNK_SIZE = int(os.environ.get("ODATA_CHUNK_SIZE", 50))
+
 # --- CONFIGURACIÓN SAP ---
 SAP_USERNAME = env("SAP_USERNAME")
 SAP_PASSWORD = env("SAP_PASSWORD")
@@ -115,10 +126,9 @@ HUEY = {
     "huey_class": "huey.SqliteHuey",
     "name": "sap_worker_queue",
     "filename": os.path.join(BASE_DIR, "huey_tasks.sqlite3"),
-    # 2. Configuración de Resultados
+    "immediate": False,
     "results": True,
     "store_none": False,
-    # ELIMINAMOS 'expire_time' porque SQLite no lo soporta nativamente en los kwargs
     # 3. Configuración del Consumer
     "consumer": {
         "workers": 4,
@@ -132,7 +142,6 @@ HUEY = {
         "health_check_interval": 5,
     },
 }
-
 LOGGING = {
     "version": 1,
     "disable_existing_loggers": False,
