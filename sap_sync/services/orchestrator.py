@@ -7,6 +7,7 @@ from decimal import Decimal
 from django.db.models import Q
 from django.utils import timezone
 from django.conf import settings # <-- NUEVA IMPORTACIÓN
+from sap_sync.services.mapper import GeneradorDinamicoSAP
 # --- MODELOS DE SAP_SYNC ---
 from sap_sync.models import (
     Compensacion,
@@ -117,6 +118,10 @@ def _procesar_y_guardar_en_paralelo_sap_batch(
 def _bulk_upsert_filtros(registros_pos: list):
     if not registros_pos:
         return
+        
+    mapper = GeneradorDinamicoSAP('PartidaPosicionFiltro')
+    campos_update = [regla.campo_django for regla in mapper.reglas if regla.campo_django not in ('bukrs', 'docnr', 'ryear', 'docln')]
+
     for chunk in _chunked_list(registros_pos, settings.DB_BATCH_SIZE_LARGE):
         bukrs_set = {p.get("Bukrs", "") for p in chunk}
         docnr_set = {p.get("Docnr", "") for p in chunk}
@@ -129,29 +134,38 @@ def _bulk_upsert_filtros(registros_pos: list):
         to_create, to_update = [], []
 
         for pos in chunk:
-            llave = (pos.get("Bukrs", ""), pos.get("Docnr", ""), pos.get("Ryear", ""), pos.get("Docln", ""))
-            ractt = pos.get("Ractt", "")
-            budat = sap_date_to_python(pos.get("Budat"))
+            datos_kwargs = mapper.construir_kwargs(pos)
+            llave = (datos_kwargs.get("bukrs", ""), datos_kwargs.get("docnr", ""), datos_kwargs.get("ryear", ""), datos_kwargs.get("docln", ""))
 
             if llave in existentes:
                 obj = existentes[llave]
-                if obj.ractt != ractt or obj.budat != budat:
-                    obj.ractt = ractt
-                    obj.budat = budat
+                hay_cambios = False
+                for campo, nuevo_valor in datos_kwargs.items():
+                    if getattr(obj, campo) != nuevo_valor:
+                        setattr(obj, campo, nuevo_valor)
+                        hay_cambios = True
+                if hay_cambios:
                     to_update.append(obj)
             else:
-                obj = PartidaPosicionFiltro(bukrs=llave[0], docnr=llave[1], ryear=llave[2], docln=llave[3], ractt=ractt, budat=budat)
+                obj = PartidaPosicionFiltro(**datos_kwargs)
                 to_create.append(obj)
                 existentes[llave] = obj
 
         if to_create:
             PartidaPosicionFiltro.objects.bulk_create(to_create, batch_size=settings.DB_BATCH_SIZE_LARGE)
         if to_update:
-            PartidaPosicionFiltro.objects.bulk_update(to_update, ["ractt", "budat"], batch_size=settings.DB_BATCH_SIZE_LARGE)
+            PartidaPosicionFiltro.objects.bulk_update(to_update, campos_update, batch_size=settings.DB_BATCH_SIZE_LARGE)
 
 def _guardar_posiciones_bulk(posiciones_raw: list):
     if not posiciones_raw:
         return
+        
+    # Inicializamos el motor para el modelo PartidaPosicion
+    mapper = GeneradorDinamicoSAP('PartidaPosicion')
+    # Extraemos qué campos deben actualizarse (excluyendo llaves primarias)
+    llaves_pk = ('bukrs', 'docnr', 'ryear', 'docln')
+    campos_update = [r.campo_django for r in mapper.reglas if r.campo_django not in llaves_pk]
+
     for chunk in _chunked_list(posiciones_raw, settings.DB_BATCH_SIZE_LARGE):
         bukrs_set = {p.get("Bukrs", "") for p in chunk}
         docnr_set = {p.get("Docnr", "") for p in chunk}
@@ -164,40 +178,49 @@ def _guardar_posiciones_bulk(posiciones_raw: list):
         to_create, to_update = [], []
 
         for pos in chunk:
-            llave = (pos.get("Bukrs", ""), pos.get("Docnr", ""), pos.get("Ryear", ""), pos.get("Docln", ""))
             partida_obj = pos.get("_partida_ref")
-
             if not partida_obj or not partida_obj.pk:
                 continue
 
-            ractt, wsl, drcrk = pos.get("Ractt", ""), Decimal(str(pos.get("Wsl", 0) or 0)), pos.get("Drcrk", "")
-            rwcur, lifnr, kunnr = pos.get("Rwcur", ""), pos.get("Lifnr", ""), pos.get("Kunnr", "")
-            koart, augbl, zuonr = pos.get("Koart", ""), pos.get("Augbl", ""), pos.get("Zuonr", "")
-            budat = sap_date_to_python(pos.get("Budat"))
+            # MAGIA DINÁMICA: Obtenemos el diccionario limpio desde SAP
+            datos_kwargs = mapper.construir_kwargs(pos)
+            
+            llave = (datos_kwargs.get("bukrs", ""), datos_kwargs.get("docnr", ""), datos_kwargs.get("ryear", ""), datos_kwargs.get("docln", ""))
 
             if llave in existentes:
                 obj = existentes[llave]
-                if (obj.ractt != ractt or obj.wsl != wsl or obj.drcrk != drcrk or obj.rwcur != rwcur or obj.lifnr != lifnr or obj.kunnr != kunnr or obj.koart != koart or obj.augbl != augbl or obj.zuonr != zuonr or obj.partida_id != partida_obj.pk):
-                    obj.partida, obj.ractt, obj.wsl, obj.drcrk = partida_obj, ractt, wsl, drcrk
-                    obj.rwcur, obj.lifnr, obj.kunnr, obj.koart = rwcur, lifnr, kunnr, koart
-                    obj.augbl, obj.zuonr, obj.budat = augbl, zuonr, budat
+                hay_cambios = False
+                
+                # Verificamos qué cambió exactamente
+                for campo in campos_update:
+                    nuevo_valor = datos_kwargs.get(campo)
+                    if getattr(obj, campo) != nuevo_valor:
+                        setattr(obj, campo, nuevo_valor)
+                        hay_cambios = True
+                        
+                if hay_cambios or obj.partida_id != partida_obj.pk:
+                    obj.partida = partida_obj
                     to_update.append(obj)
             else:
-                obj = PartidaPosicion(partida=partida_obj, bukrs=llave[0], docnr=llave[1], ryear=llave[2], docln=llave[3], ractt=ractt, wsl=wsl, drcrk=drcrk, rwcur=rwcur, lifnr=lifnr, kunnr=kunnr, koart=koart, augbl=augbl, zuonr=zuonr, budat=budat)
+                # Se crea el objeto desempaquetando los datos convertidos
+                obj = PartidaPosicion(partida=partida_obj, **datos_kwargs)
                 to_create.append(obj)
                 existentes[llave] = obj
 
         if to_create:
             PartidaPosicion.objects.bulk_create(to_create, batch_size=settings.DB_BATCH_SIZE_LARGE)
         if to_update:
-            PartidaPosicion.objects.bulk_update(to_update, ["partida", "ractt", "wsl", "drcrk", "rwcur", "lifnr", "kunnr", "koart", "augbl", "zuonr", "budat"], batch_size=settings.DB_BATCH_SIZE_LARGE)
+            PartidaPosicion.objects.bulk_update(to_update, ["partida"] + campos_update, batch_size=settings.DB_BATCH_SIZE_LARGE)
 
 def _guardar_partidas_desde_sap(registros_sap: list) -> tuple[int, int]:
     if not registros_sap:
         return 0, 0
     total_creadas = total_actualizadas = 0
 
-    for chunk in _chunked_list(registros_sap, DB_BATCH_SIZE_MEDIUM):
+    mapper = GeneradorDinamicoSAP('Partida')
+    campos_update = [regla.campo_django for regla in mapper.reglas if regla.campo_django not in ('bukrs', 'belnr', 'gjahr')]
+
+    for chunk in _chunked_list(registros_sap, settings.DB_BATCH_SIZE_MEDIUM):
         bukrs_set = {d.get("Bukrs", "") for d in chunk}
         belnr_set = {d.get("Belnr", "") for d in chunk}
         gjahr_set = {d.get("Gjahr", "") for d in chunk}
@@ -208,37 +231,43 @@ def _guardar_partidas_desde_sap(registros_sap: list) -> tuple[int, int]:
         to_create, to_update, posiciones_raw_list = [], [], []
 
         for doc in chunk:
-            llave = (doc.get("Bukrs", ""), doc.get("Belnr", ""), doc.get("Gjahr", ""))
-            blart, bktxt = doc.get("Blart", ""), doc.get("Bktxt", "")
-            bldat, budat = sap_date_to_python(doc.get("Bldat")), sap_date_to_python(doc.get("Budat"))
+            datos_kwargs = mapper.construir_kwargs(doc)
+            llave = (datos_kwargs.get("bukrs", ""), datos_kwargs.get("belnr", ""), datos_kwargs.get("gjahr", ""))
 
             if llave in existentes:
                 p = existentes[llave]
-                if p.blart != blart or p.bldat != bldat or p.budat != budat or p.bktxt != bktxt:
-                    p.blart, p.bktxt, p.bldat, p.budat = blart, bktxt, bldat, budat
+                hay_cambios = False
+                for campo, nuevo_valor in datos_kwargs.items():
+                    if getattr(p, campo) != nuevo_valor:
+                        setattr(p, campo, nuevo_valor)
+                        hay_cambios = True
+                if hay_cambios:
                     to_update.append(p)
             else:
-                p = Partida(bukrs=llave[0], belnr=llave[1], gjahr=llave[2], blart=blart, bktxt=bktxt, bldat=bldat, budat=budat)
+                p = Partida(**datos_kwargs)
                 to_create.append(p)
                 existentes[llave] = p
 
         if to_create:
-            Partida.objects.bulk_create(to_create, batch_size=DB_BATCH_SIZE_MEDIUM)
+            Partida.objects.bulk_create(to_create, batch_size=settings.DB_BATCH_SIZE_MEDIUM)
             total_creadas += len(to_create)
+            # Refrescamos el diccionario existentes para las posiciones
             nuevos = Partida.objects.filter(bukrs__in=bukrs_set, belnr__in=belnr_set, gjahr__in=gjahr_set)
             for n in nuevos:
                 existentes[(n.bukrs, n.belnr, n.gjahr)] = n
 
         if to_update:
-            Partida.objects.bulk_update(to_update, ["blart", "bktxt", "bldat", "budat"], batch_size=DB_BATCH_SIZE_MEDIUM)
+            Partida.objects.bulk_update(to_update, campos_update, batch_size=settings.DB_BATCH_SIZE_MEDIUM)
             total_actualizadas += len(to_update)
 
+        # Extraemos posiciones para enviarlas al bulk (que ya modificamos en la lección anterior)
         for doc in chunk:
             llave_padre = (doc.get("Bukrs", ""), doc.get("Belnr", ""), doc.get("Gjahr", ""))
             partida_obj = existentes.get(llave_padre)
-            for pos in doc.get("toPosiciones", {}).get("results", []):
-                pos["_partida_ref"] = partida_obj
-                posiciones_raw_list.append(pos)
+            if partida_obj:
+                for pos in doc.get("toPosiciones", {}).get("results", []):
+                    pos["_partida_ref"] = partida_obj
+                    posiciones_raw_list.append(pos)
 
         _guardar_posiciones_bulk(posiciones_raw_list)
 
@@ -524,11 +553,13 @@ class SAPSyncOrchestrator:
     def _paso4_rangos_augbl(self, fecha_inicio: date, fecha_fin: date) -> tuple:
         augbls = (PartidaPosicion.objects.filter(partida__budat__gte=fecha_inicio, partida__budat__lte=fecha_fin)
             .exclude(augbl="")
+            .exclude(augbl__isnull=True) 
             .values_list("augbl", flat=True)
             .distinct()
         )
 
-        lista_limpia = [a for a in augbls if a.strip()]
+        lista_limpia = [a for a in augbls if a and a.strip()] 
+        
         try:
             lista_ordenada = sorted(lista_limpia, key=int)
         except ValueError:
@@ -586,7 +617,10 @@ class SAPSyncOrchestrator:
 
         def cb_compensaciones(registros):
             count_local = 0
-            for chunk_rec in _chunked_list(registros, 2000):
+            mapper = GeneradorDinamicoSAP('Compensacion')
+            campos_update = [regla.campo_django for regla in mapper.reglas if regla.campo_django not in ('bukrs', 'belnr', 'gjahr', 'buzei')]
+
+            for chunk_rec in _chunked_list(registros, settings.DB_BATCH_SIZE_LARGE):
                 bukrs_set = {r.get("Bukrs", "") for r in chunk_rec}
                 belnr_set = {r.get("Belnr", "") for r in chunk_rec}
                 gjahr_set = {r.get("Gjahr", "") for r in chunk_rec}
@@ -598,31 +632,28 @@ class SAPSyncOrchestrator:
                 to_create, to_update = [], []
 
                 for rec in chunk_rec:
-                    llave = (rec.get("Bukrs", ""), rec.get("Belnr", ""), rec.get("Gjahr", ""), rec.get("Buzei", ""))
-                    shkzg, pswsl, zuonr = rec.get("Shkzg", ""), rec.get("Pswsl", ""), rec.get("Zuonr", "")
-                    sgtxt, saknr, hkont = rec.get("Sgtxt", ""), rec.get("Saknr", ""), rec.get("Hkont", "")
-                    kunnr, lifnr, augbl = rec.get("Kunnr", ""), rec.get("Lifnr", ""), rec.get("Augbl", "")
-                    bschl, koart = rec.get("Bschl", ""), rec.get("Koart", "")
-                    dmbtr, wrbtr, pswbt = Decimal(str(rec.get("Dmbtr", 0) or 0)), Decimal(str(rec.get("Wrbtr", 0) or 0)), Decimal(str(rec.get("Pswbt", 0) or 0))
-                    augdt, augcp = sap_date_to_python(rec.get("Augdt")), sap_date_to_python(rec.get("Augcp"))
+                    datos_kwargs = mapper.construir_kwargs(rec)
+                    llave = (datos_kwargs.get("bukrs", ""), datos_kwargs.get("belnr", ""), datos_kwargs.get("gjahr", ""), datos_kwargs.get("buzei", ""))
 
                     if llave in existentes:
                         obj = existentes[llave]
-                        obj.shkzg, obj.dmbtr, obj.wrbtr, obj.pswbt, obj.pswsl = shkzg, dmbtr, wrbtr, pswbt, pswsl
-                        obj.zuonr, obj.sgtxt, obj.saknr, obj.hkont, obj.kunnr = zuonr, sgtxt, saknr, hkont, kunnr
-                        obj.lifnr, obj.augdt, obj.augcp, obj.augbl = lifnr, augdt, augcp, augbl
-                        obj.bschl, obj.koart = bschl, koart
-                        to_update.append(obj)
+                        hay_cambios = False
+                        for campo, nuevo_valor in datos_kwargs.items():
+                            if getattr(obj, campo) != nuevo_valor:
+                                setattr(obj, campo, nuevo_valor)
+                                hay_cambios = True
+                        if hay_cambios:
+                            to_update.append(obj)
                     else:
-                        obj = Compensacion(bukrs=llave[0], belnr=llave[1], gjahr=llave[2], buzei=llave[3], shkzg=shkzg, dmbtr=dmbtr, wrbtr=wrbtr, pswbt=pswbt, pswsl=pswsl, zuonr=zuonr, sgtxt=sgtxt, saknr=saknr, hkont=hkont, kunnr=kunnr, lifnr=lifnr, augdt=augdt, augcp=augcp, augbl=augbl, bschl=bschl, koart=koart)
+                        obj = Compensacion(**datos_kwargs)
                         to_create.append(obj)
                         existentes[llave] = obj
 
                 if to_create:
-                    Compensacion.objects.bulk_create(to_create, batch_size=2000)
+                    Compensacion.objects.bulk_create(to_create, batch_size=settings.DB_BATCH_SIZE_LARGE)
                     count_local += len(to_create)
                 if to_update:
-                    Compensacion.objects.bulk_update(to_update, ["shkzg", "dmbtr", "wrbtr", "pswbt", "pswsl", "zuonr", "sgtxt", "saknr", "hkont", "kunnr", "lifnr", "augdt", "augcp", "augbl", "bschl", "koart"], batch_size=2000)
+                    Compensacion.objects.bulk_update(to_update, campos_update, batch_size=settings.DB_BATCH_SIZE_LARGE)
                     count_local += len(to_update)
             return count_local
 

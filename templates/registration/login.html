@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Disponibilidad Bancaria | CMDLT</title>
+    <style>
+        :root {
+            --cmdlt-blue: #3c4295;
+            --cmdlt-green: #6eb43f;
+            --bg-color: #f4f7fb;
+        }
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: var(--bg-color);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            margin: 0;
+        }
+        .login-card {
+            background: white;
+            padding: 40px;
+            border-radius: 12px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.08);
+            width: 100%;
+            max-width: 400px;
+            text-align: center;
+            border-top: 5px solid var(--cmdlt-green);
+        }
+        .login-card h2 {
+            color: var(--cmdlt-blue);
+            margin-bottom: 25px;
+            font-size: 22px;
+        }
+        .form-group {
+            margin-bottom: 20px;
+            text-align: left;
+        }
+        .form-group label {
+            display: block;
+            margin-bottom: 8px;
+            color: #555;
+            font-weight: 500;
+        }
+        .form-group input {
+            width: 100%;
+            padding: 12px;
+            border: 1px solid #ccc;
+            border-radius: 6px;
+            box-sizing: border-box;
+            font-size: 15px;
+        }
+        .form-group input:focus {
+            border-color: var(--cmdlt-blue);
+            outline: none;
+            box-shadow: 0 0 0 3px rgba(60, 66, 149, 0.1);
+        }
+        .btn-submit {
+            background-color: var(--cmdlt-blue);
+            color: white;
+            border: none;
+            padding: 14px;
+            width: 100%;
+            border-radius: 6px;
+            font-size: 16px;
+            font-weight: bold;
+            cursor: pointer;
+            transition: background-color 0.3s;
+            margin-top: 10px;
+        }
+        .btn-submit:hover {
+            background-color: #2a2e6b;
+        }
+        .error-msg {
+            color: #d93025;
+            background: #fce8e6;
+            padding: 10px;
+            border-radius: 4px;
+            margin-bottom: 20px;
+            font-size: 14px;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="login-card">
+        <h2 style="display:flex; align-items:center; justify-content:center; gap:10px;">
+            <span style="color: var(--cmdlt-green); font-size: 30px;">●</span> 
+            Disponibilidad Bancaria
+        </h2>
+        
+        <p style="color: #666; margin-bottom: 30px; font-size: 14px;">
+            Ingrese con sus credenciales de SAP. El acceso está restringido a usuarios autorizados.
+        </p>
+
+        {% if form.errors %}
+            <div class="error-msg">
+                Credenciales inválidas o su usuario aún <b>no ha sido aprobado</b> por un Administrador.
+            </div>
+        {% endif %}
+
+        <form method="post">
+            {% csrf_token %}
+            <div class="form-group">
+                <label for="id_username">Usuario SAP</label>
+                <input type="text" name="username" autofocus required id="id_username" placeholder="Ej. PMARTINEZ">
+            </div>
+            <div class="form-group">
+                <label for="id_password">Contraseña SAP</label>
+                <input type="password" name="password" required id="id_password" placeholder="••••••••">
+            </div>
+            <button type="submit" class="btn-submit">Ingresar al Sistema</button>
+        </form>
+    </div>
+
+</body>
+</html>

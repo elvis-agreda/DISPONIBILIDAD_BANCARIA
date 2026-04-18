@@ -12,6 +12,8 @@ python manage.py migrate
 :: 3. Iniciar el Worker de Huey en una nueva ventana
 echo Iniciando Huey Worker en ventana separada...
 
+python manage.py poblar_mapeos_sap
+
 start "Huey Worker" cmd /k ".venv\Scripts\activate && python manage.py run_huey"
 
 :: 4. Iniciar el servidor de Django en esta ventana

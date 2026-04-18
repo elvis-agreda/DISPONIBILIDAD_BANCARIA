@@ -30,7 +30,7 @@ class SAPServiceURL:
     SALDOS_BANCARIOS = (
         f"{URL_BASE}:{SAP_PORT}/sap/opu/odata/sap/ZFI_SALDO_BANCARIO_CDS/"
     )
-    Tasa_BCV = f"{URL_BASE}:{SAP_PORT}/fmcall/ZFI_TASA_BCV"
+    TASA_BCV = f"{URL_BASE}:{SAP_PORT}/fmcall/ZFI_TASA_BCV"
 
 
 # ── Cliente OData V2 principal ──────────────────────────────────────────────
@@ -499,7 +499,7 @@ class SAPTasaBCVClient:
         password: str,
         sap_client: str,
     ):
-        self.endpoint_url = SAPServiceURL.Tasa_BCV
+        self.endpoint_url = SAPServiceURL.TASA_BCV
         self.username = username
         self.password = password
         self.sap_client = sap_client

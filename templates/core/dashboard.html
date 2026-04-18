@@ -1,0 +1,81 @@
+{% extends "base.html" %}
+{% load dict_tags %}  {% block content %}
+<div class="container-fluid p-4">
+    <div class="d-flex justify-content-between align-items-center mb-4 pb-2 border-bottom" style="border-color: #6eb43f !important;">
+        <h2 style="color: #3c4295;">Control de Disponibilidad Bancaria</h2>
+        
+        <div class="card p-2 shadow-sm border-0">
+            <form id="sync-form" class="d-flex align-items-end gap-2">
+                <div>
+                    <label class="small fw-bold">Rango de Sincronización:</label>
+                    <div class="d-flex gap-2">
+                        <input type="date" id="start_date" class="form-control form-control-sm" required>
+                        <input type="date" id="end_date" class="form-control form-control-sm" required>
+                    </div>
+                </div>
+                <button type="button" onclick="iniciarSync()" class="btn btn-sm" style="background-color: #6eb43f; color: white;">
+                    <i class="fas fa-sync-alt"></i> Ejecutar Worker
+                </button>
+            </form>
+        </div>
+    </div>
+
+    <div class="table-responsive shadow-sm rounded">
+        <table class="table table-bordered table-hover align-middle mb-0" style="font-size: 0.85rem;">
+            <thead class="text-white" style="background-color: #3c4295;">
+                <tr>
+                    <th rowspan="3" class="align-middle text-center" style="min-width: 200px;">Categoría</th>
+                    {% for dia in dias_mes %}
+                    <th class="text-center py-1">{{ dia.nombre_dia }}</th>
+                    {% endfor %}
+                </tr>
+                <tr>
+                    {% for dia in dias_mes %}
+                    <th class="text-center py-1 border-top-0">{{ dia.numero_dia }}</th>
+                    {% endfor %}
+                </tr>
+                <tr style="background-color: #f0f1f8; color: #3c4295;">
+                    {% for dia in dias_mes %}
+                    <th class="text-center py-0 small" style="font-size: 0.7rem;">Tasa: {{ dia.tasa_bcv|floatformat:2 }}</th>
+                    {% endfor %}
+                </tr>
+            </thead>
+            <tbody>
+                {% for categoria in categorias %}
+                <tr>
+                    <td class="fw-bold">{{ categoria }}</td>
+                    {% for dia in dias_mes %}
+                    <td class="text-end">
+                        {% with valor=matriz|get_val:categoria|get_val:dia.fecha_str %}
+                            {{ valor|default:"-" }}
+                        {% endwith %}
+                    </td>
+                    {% endfor %}
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<script>
+function iniciarSync() {
+    const start = document.getElementById('start_date').value;
+    const end = document.getElementById('end_date').value;
+    
+    if(!start || !end) return alert("Por favor seleccione un rango de fechas.");
+
+    fetch("{% url 'sync_manual' %}", {
+        method: "POST",
+        headers: {
+            "Content-Type": "application/json",
+            "X-CSRFToken": "{{ csrf_token }}"
+        },
+        body: JSON.stringify({ fecha_inicio: start, fecha_fin: end })
+    })
+    .then(res => res.json())
+    .then(data => alert(data.status))
+    .catch(err => alert("Error al iniciar sincronización"));
+}
+</script>
+{% endblock %}

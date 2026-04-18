@@ -323,3 +323,33 @@ class CuentaConfiguracion(models.Model):
 
     def __str__(self):
         return f"{self.cuenta} - {self.get_tipo_display()}"
+
+class MapeoCampo(models.Model):
+    MODELOS_CHOICES = [
+        ('Partida', 'Cabecera (Partida)'),
+        ('PartidaPosicion', 'Detalle (PartidaPosicion)'),
+        ('Compensacion', 'Compensación'),
+        ('PartidaPosicionFiltro', 'Filtro (PartidaPosicionFiltro)')
+    ]
+    
+    TIPO_DATO_CHOICES = [
+        ('TEXTO', 'Texto / String'),
+        ('FECHA', 'Fecha SAP (AAAAMMDD)'),
+        ('DECIMAL', 'Monto Decimal'),
+        ('ENTERO', 'Número Entero'),
+        ('BOOLEANO', 'Booleano (X o Vacío)'),
+    ]
+
+    modelo_destino = models.CharField("Modelo en Django", max_length=50, choices=MODELOS_CHOICES)
+    campo_sap = models.CharField("Campo en SAP (ej. Bukrs)", max_length=50)
+    campo_django = models.CharField("Campo en Django (ej. bukrs)", max_length=50)
+    tipo_dato = models.CharField("Tipo de Dato", max_length=20, choices=TIPO_DATO_CHOICES, default='TEXTO')
+    activo = models.BooleanField(default=True)
+
+    class Meta:
+        verbose_name = "Mapeo de Campo SAP"
+        verbose_name_plural = "Configuración de Mapeos SAP"
+        unique_together = ('modelo_destino', 'campo_sap')
+
+    def __str__(self):
+        return f"{self.modelo_destino}: {self.campo_sap} -> {self.campo_django} ({self.tipo_dato})"

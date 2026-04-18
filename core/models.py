@@ -92,7 +92,7 @@ class DashboardConsolidado(models.Model):
     tipo_operacion = models.CharField(
         "Tipo Operación", max_length=50, db_index=True
     )  # EJ: EGRESO, INGRESO, TRANSFERENCIA
-    categoria = models.CharField("Categoría", max_length=50, db_index=True)
+    categoria = models.CharField("Categoría", max_length=100, db_index=True)
     sub_categoria = models.CharField(
         "Sub Categoría", max_length=50, blank=True, null=True
     )
