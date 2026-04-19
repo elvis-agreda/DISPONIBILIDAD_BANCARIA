@@ -1,3 +1,4 @@
+{% load i18n %}
 <!DOCTYPE html>
 <html lang="es">
 <head>
@@ -54,8 +55,21 @@
                 </ul>
                 <div class="d-flex align-items-center">
                     <span class="text-white me-3">
-                        <i class="fas fa-user-circle"></i> {{ request.user.username }}
+                        <i class="fas fa-user-circle"></i> {{ request.user.username|upper }}
                     </span>
+                    <form action="{% url 'set_language' %}" method="post" class="me-3">
+                        {% csrf_token %}
+                        <input name="next" type="hidden" value="{{ redirect_to }}">
+                        <select name="language" class="form-select form-select-sm bg-transparent text-white border-light" onchange="this.form.submit()">
+                            {% get_current_language as LANGUAGE_CODE %}
+                            {% get_available_languages as LANGUAGES %}
+                            {% for lang in LANGUAGES %}
+                                <option value="{{ lang.0 }}" class="text-dark" {% if lang.0 == LANGUAGE_CODE %}selected{% endif %}>
+                                    {{ lang.1 }}
+                                </option>
+                            {% endfor %}
+                        </select>
+                    </form>
                     <form action="{% url 'logout' %}" method="post" class="m-0">
                         {% csrf_token %}
                         <button type="submit" class="btn btn-sm btn-outline-light border-0">

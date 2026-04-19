@@ -22,6 +22,7 @@ from django.contrib.auth import views as auth_views
 from django.views.generic import RedirectView
 
 urlpatterns = [
+    path('i18n/', include('django.conf.urls.i18n')),
     path("admin/", admin.site.urls),
     
     path('', RedirectView.as_view(pattern_name='login', permanent=False)),

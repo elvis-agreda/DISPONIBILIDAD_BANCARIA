@@ -97,9 +97,9 @@ class DashboardConsolidado(models.Model):
         "Sub Categoría", max_length=50, blank=True, null=True
     )
 
-    cuenta_contable = models.CharField("Cuenta Bancaria", max_length=20, db_index=True)
+    cuenta_contable = models.CharField("Cuenta Bancaria", max_length=50, db_index=True)
     cuenta_gasto = models.CharField(
-        "Cuenta Gasto", max_length=20, blank=True, null=True
+        "Cuenta Gasto", max_length=50, blank=True, null=True
     )
     lifnr = models.CharField("Proveedor (LIFNR)", max_length=20, blank=True, null=True)
     kunnr = models.CharField("Cliente (KUNNR)", max_length=20, blank=True, null=True)
@@ -143,7 +143,7 @@ class AsientoAuditoria(models.Model):
     belnr = models.CharField("Documento", max_length=20, db_index=True)
     gjahr = models.CharField("Ejercicio", max_length=4)
     blart = models.CharField("Clave Doc.", max_length=5)
-    cuenta_contable = models.CharField("Cuenta", max_length=20)
+    cuenta_contable = models.CharField("Cuenta", max_length=50)
 
     monto = models.DecimalField("Monto", max_digits=20, decimal_places=2)
     rwcur = models.CharField("Moneda", max_length=5)
@@ -162,3 +162,25 @@ class AsientoAuditoria(models.Model):
 
     def __str__(self):
         return f"AUDIT: {self.belnr} - {self.motivo_descarte}"
+
+class ColumnaDrillDown(models.Model):
+    TIPO_CHOICES = [
+        ('TEXTO', 'Texto / General'),
+        ('MONTO', 'Monto (2 decimales)'),
+        ('TASA', 'Tasa (Todos los decimales)'),
+        ('FECHA', 'Fecha'),
+    ]
+    
+    campo_bd = models.CharField("Campo en Base de Datos", max_length=50)
+    etiqueta = models.CharField("Etiqueta en Pantalla", max_length=50)
+    tipo_dato = models.CharField("Tipo de Dato", max_length=10, choices=TIPO_CHOICES, default='TEXTO') # <-- NUEVO
+    orden = models.IntegerField("Orden", default=0)
+    activo = models.BooleanField("Activa", default=True)
+
+    class Meta:
+        verbose_name = "Columna de Drill-Down"
+        verbose_name_plural = "Configuración Drill-Down"
+        ordering = ['orden']
+
+    def __str__(self):
+        return f"{self.etiqueta} ({self.campo_bd})"

@@ -1,4 +1,5 @@
 import logging
+import traceback
 from datetime import date, timedelta
 from typing import Optional
 
@@ -21,6 +22,7 @@ def ejecutar_sync_sap(
     fecha_fin: date,
     tipo: str = "MANUAL",
     sync_log_id: Optional[int] = None,
+    usuario_id: Optional[int] = None,
 ):
     anio, periodo = _fecha_a_anio_periodo(fecha_inicio)
 
@@ -36,6 +38,7 @@ def ejecutar_sync_sap(
             fecha_fin=fecha_fin,
             anio=anio,
             periodo=periodo,
+            usuario_id=usuario_id
         )
 
     log.estado = "EN_CURSO"
@@ -49,7 +52,8 @@ def ejecutar_sync_sap(
         log.registrar_error(paso=0, mensaje=str(exc))
         log.marcar_finalizado("CANCELADO")
     except Exception as exc:
-        log.registrar_error(paso=0, mensaje=f"Error fatal general: {exc}")
+        detalle_error = traceback.format_exc()
+        log.registrar_error(paso=0, mensaje=f"Error fatal general: {exc}", contexto={"traceback": detalle_error})
         log.marcar_finalizado("FALLIDO")
         raise
 
@@ -70,7 +74,8 @@ def ejecutar_paso8_manual(fecha_inicio: date, fecha_fin: date):
         orchestrator.paso8_calculo_disponibilidad(fecha_inicio, fecha_fin)
         log.marcar_finalizado("EXITOSO")
     except Exception as exc:
-        log.registrar_error(8, mensaje=f"Error fatal en reprocesamiento manual: {exc}")
+        detalle_error = traceback.format_exc()
+        log.registrar_error(8, mensaje=f"Error fatal en reprocesamiento manual: {exc}", contexto={"traceback": detalle_error})
         log.marcar_finalizado("FALLIDO")
         raise
 
@@ -94,6 +99,7 @@ def reintentar_sincronizacion(log_id: int):
         log.registrar_error(paso=0, mensaje=str(exc))
         log.marcar_finalizado("CANCELADO")
     except Exception as exc:
-        log.registrar_error(paso=0, mensaje=f"Error fatal en reintento: {exc}")
+        detalle_error = traceback.format_exc()
+        log.registrar_error(paso=0, mensaje=f"Error fatal en reintento: {exc}", contexto={"traceback": detalle_error})
         log.marcar_finalizado("FALLIDO")
         raise

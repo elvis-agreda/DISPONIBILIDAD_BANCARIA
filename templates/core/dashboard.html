@@ -1,56 +1,162 @@
-{% extends "base.html" %}
-{% load dict_tags %}  {% block content %}
-<div class="container-fluid p-4">
-    <div class="d-flex justify-content-between align-items-center mb-4 pb-2 border-bottom" style="border-color: #6eb43f !important;">
-        <h2 style="color: #3c4295;">Control de Disponibilidad Bancaria</h2>
-        
-        <div class="card p-2 shadow-sm border-0">
-            <form id="sync-form" class="d-flex align-items-end gap-2">
-                <div>
-                    <label class="small fw-bold">Rango de Sincronización:</label>
-                    <div class="d-flex gap-2">
-                        <input type="date" id="start_date" class="form-control form-control-sm" required>
-                        <input type="date" id="end_date" class="form-control form-control-sm" required>
+{% extends 'base.html' %}
+{% load dict_tags %}
+{% load i18n %}
+
+{% block content %}
+<style>
+    /* FIJACIÓN DE COLUMNA DE CATEGORÍA */
+    .table-responsive {
+        max-height: 78vh;
+        overflow: auto;
+        border: 1px solid var(--border-color);
+    }
+    
+    #main-table th.col-categoria,
+    #main-table td.col-categoria {
+        position: sticky !important;
+        left: 0 !important;
+        z-index: 10 !important;
+        background-color: var(--body-bg, #fff) !important;
+        border-right: 2px solid #6eb43f !important;
+        min-width: 240px;
+    }
+
+    #main-table th.col-categoria {
+        z-index: 11 !important;
+        background-color: #3c4295 !important;
+        color: white !important;
+    }
+
+    .btn-toggle-week {
+        cursor: pointer;
+        padding: 2px 6px;
+        background: rgba(255, 255, 255, 0.2);
+        border: 1px solid white;
+        color: white;
+        border-radius: 4px;
+        font-size: 0.7rem;
+    }
+
+    .hidden-col { display: none !important; }
+
+    /* Estilos de Totales */
+    .col-semanal { background-color: #fff8cc !important; color: #000 !important; }
+    .col-mensual { background-color: #e8f5e9 !important; font-weight: bold; color: #1b5e20 !important; }
+
+    [data-theme='dark'] td.col-categoria { background-color: #1a1d21 !important; }
+    [data-theme='dark'] .col-semanal { background-color: #3d3a25 !important; color: #fff !important; }
+    [data-theme='dark'] .col-mensual { background-color: #1b2e1c !important; }
+</style>
+
+<div class="container-fluid mt-3">
+    <div class="d-flex justify-content-between align-items-center mb-3 pb-2 border-bottom" style="border-color: #6eb43f !important;">
+        <h2 style="color: #3c4295; font-weight: bold;">{% translate "Control de Disponibilidad Bancaria" %}</h2>
+    </div>
+
+    <div class="card p-3 shadow-sm border-0 mb-3 bg-light">
+        <div class="row align-items-end">
+            <div class="col-md-5">
+                <form method="get" class="d-flex align-items-end gap-2">
+                    <div class="flex-grow-1">
+                        <label class="small fw-bold">{% translate "Seleccionar Periodo" %}:</label>
+                        <div class="d-flex gap-2">
+                            <select name="mes" class="form-select form-select-sm">
+                                {% for num, nombre in meses_lista %}
+                                    <option value="{{ num }}" {% if num == mes_sel %}selected{% endif %}>{{ nombre }}</option>
+                                {% endfor %}
+                            </select>
+                            <select name="anio" class="form-select form-select-sm">
+                                {% for a in anios_lista %}
+                                    <option value="{{ a|stringformat:'d' }}" {% if a == anio_sel %}selected{% endif %}>{{ a|stringformat:'d' }}</option>
+                                {% endfor %}
+                            </select>
+                        </div>
                     </div>
-                </div>
-                <button type="button" onclick="iniciarSync()" class="btn btn-sm" style="background-color: #6eb43f; color: white;">
-                    <i class="fas fa-sync-alt"></i> Ejecutar Worker
-                </button>
-            </form>
+                    <button type="submit" class="btn btn-sm btn-primary">{% translate "Ver" %}</button>
+                </form>
+            </div>
+
+            <div class="col-md-7">
+                <form id="sync-form" class="d-flex align-items-end gap-2">
+                    <div class="flex-grow-1">
+                        <label class="small fw-bold">{% translate "Rango para Sincronizar SAP" %}:</label>
+                        <div class="d-flex gap-2">
+                            <input type="date" id="start_date" class="form-control form-control-sm" required>
+                            <input type="date" id="end_date" class="form-control form-control-sm" required>
+                        </div>
+                    </div>
+                    <button type="button" onclick="iniciarSync()" class="btn btn-sm" style="background-color: #6eb43f; color: white; font-weight: bold;">
+                        <i class="fas fa-sync-alt"></i> {% translate "Ejecutar" %}
+                    </button>
+                </form>
+            </div>
         </div>
     </div>
 
     <div class="table-responsive shadow-sm rounded">
-        <table class="table table-bordered table-hover align-middle mb-0" style="font-size: 0.85rem;">
-            <thead class="text-white" style="background-color: #3c4295;">
+        <table id="main-table" class="table table-bordered align-middle mb-0" style="font-size: 0.78rem;">
+            <thead class="text-white text-center" style="background-color: #3c4295;">
                 <tr>
-                    <th rowspan="3" class="align-middle text-center" style="min-width: 200px;">Categoría</th>
-                    {% for dia in dias_mes %}
-                    <th class="text-center py-1">{{ dia.nombre_dia }}</th>
+                    <th rowspan="3" class="align-middle text-start col-categoria">{% translate "Categoría" %}</th>
+                    {% for semana in semanas %}
+                        {% for dia in semana.dias %}
+                            <th class="py-1 week-{{ semana.id }}-col">{{ dia.fecha_obj|date:"D"|upper }}</th>
+                        {% endfor %}
+                        <th rowspan="2" class="align-middle text-dark" style="background-color: #ffd700; min-width: 120px;">
+                            {% translate "Semana" %} {{ semana.id }}
+                            <button class="btn-toggle-week" onclick="toggleSemana('{{ semana.id }}')">
+                                <i class="fas fa-compress-arrows-alt" id="icon-week-{{ semana.id }}"></i>
+                            </button>
+                        </th>
                     {% endfor %}
+                    <th rowspan="2" class="align-middle bg-success" style="min-width: 130px;">{% translate "TOTAL MENSUAL" %}</th>
                 </tr>
                 <tr>
-                    {% for dia in dias_mes %}
-                    <th class="text-center py-1 border-top-0">{{ dia.numero_dia }}</th>
+                    {% for semana in semanas %}
+                        {% for dia in semana.dias %}
+                            <th class="py-1 border-top-0 week-{{ semana.id }}-col">{{ dia.numero_dia }}</th>
+                        {% endfor %}
                     {% endfor %}
                 </tr>
                 <tr style="background-color: #f0f1f8; color: #3c4295;">
-                    {% for dia in dias_mes %}
-                    <th class="text-center py-0 small" style="font-size: 0.7rem;">Tasa: {{ dia.tasa_bcv|floatformat:2 }}</th>
+                    {% for semana in semanas %}
+                        {% for dia in semana.dias %}
+                            <th class="py-0 small week-{{ semana.id }}-col" style="font-size: 0.62rem; font-weight: normal;">
+                                TC: {{ dia.tasa_bcv|formato_tasa }}
+                            </th>
+                        {% endfor %}
+                        <th class="col-semanal small">Acum.</th>
                     {% endfor %}
+                    <th class="bg-success">Cierre</th>
                 </tr>
             </thead>
             <tbody>
                 {% for categoria in categorias %}
                 <tr>
-                    <td class="fw-bold">{{ categoria }}</td>
-                    {% for dia in dias_mes %}
-                    <td class="text-end">
-                        {% with valor=matriz|get_val:categoria|get_val:dia.fecha_str %}
-                            {{ valor|default:"-" }}
-                        {% endwith %}
-                    </td>
-                    {% endfor %}
+                    <td class="fw-bold col-categoria">{{ categoria }}</td>
+                    {% with cat_data=matriz|get_val:categoria %}
+                        {% for semana in semanas %}
+                            {% for dia in semana.dias %}
+                                <td class="text-end week-{{ semana.id }}-col">
+                                    {% with valor=cat_data.dias|get_val:dia.fecha_str %}
+                                        {% if valor %}
+                                            <a href="javascript:void(0)" onclick="verDrillDown('{{ categoria }}', '{{ dia.fecha_str }}')" class="text-decoration-none fw-bold">
+                                                {{ valor|formato_ve }}
+                                            </a>
+                                        {% else %}-{% endif %}
+                                    {% endwith %}
+                                </td>
+                            {% endfor %}
+                            <td class="text-end fw-bold col-semanal">
+                                {% with sem_id=semana.id|stringformat:"s" %}
+                                    {{ cat_data.totales_semana|get_val:sem_id|formato_ve }}
+                                {% endwith %}
+                            </td>
+                        {% endfor %}
+                        <td class="text-end fw-bold text-success col-mensual">
+                            {{ cat_data.total_mes|formato_ve }}
+                        </td>
+                    {% endwith %}
                 </tr>
                 {% endfor %}
             </tbody>
@@ -58,24 +164,138 @@
     </div>
 </div>
 
-<script>
-function iniciarSync() {
-    const start = document.getElementById('start_date').value;
-    const end = document.getElementById('end_date').value;
-    
-    if(!start || !end) return alert("Por favor seleccione un rango de fechas.");
+<div class="toast-container position-fixed bottom-0 end-0 p-3" style="z-index: 1060;">
+    <div id="sistemaToast" class="toast align-items-center text-white border-0" role="alert" aria-live="assertive" aria-atomic="true">
+        <div class="d-flex">
+            <div class="toast-body fw-bold" id="toastMensaje"></div>
+            <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast" aria-label="Close"></button>
+        </div>
+    </div>
+</div>
 
-    fetch("{% url 'sync_manual' %}", {
-        method: "POST",
-        headers: {
-            "Content-Type": "application/json",
-            "X-CSRFToken": "{{ csrf_token }}"
-        },
-        body: JSON.stringify({ fecha_inicio: start, fecha_fin: end })
-    })
-    .then(res => res.json())
-    .then(data => alert(data.status))
-    .catch(err => alert("Error al iniciar sincronización"));
-}
+<div class="modal fade" id="drillDownModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-xl">
+    <div class="modal-content">
+      <div class="modal-header text-white" style="background-color: #3c4295;">
+        <h5 class="modal-title">
+            <i class="fas fa-list-ul me-2"></i> {% translate "Detalle de Asientos" %} - <span id="dd-titulo"></span>
+        </h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body table-responsive">
+        <table class="table table-sm table-striped table-hover shadow-sm">
+            <thead class="table-dark">
+                <tr id="dd-head"></tr>
+            </thead>
+            <tbody id="dd-body"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+    // Usamos de-DE (Alemán) en JS porque es la garantía internacional 
+    // de usar siempre puntos para miles y comas para decimales.
+    const formatter = new Intl.NumberFormat('de-DE', {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2
+    });
+
+    function mostrarToast(mensaje, tipo = 'success') {
+        const toastEl = document.getElementById('sistemaToast');
+        const toastMensaje = document.getElementById('toastMensaje');
+        const btnClose = toastEl.querySelector('.btn-close');
+
+        toastEl.className = 'toast align-items-center border-0';
+        btnClose.classList.add('btn-close-white');
+
+        if (tipo === 'success') toastEl.classList.add('bg-success', 'text-white');
+        else if (tipo === 'error') toastEl.classList.add('bg-danger', 'text-white');
+        else if (tipo === 'warning') {
+            toastEl.classList.add('bg-warning', 'text-dark');
+            btnClose.classList.remove('btn-close-white');
+        } else toastEl.classList.add('bg-primary', 'text-white');
+
+        toastMensaje.innerText = mensaje;
+        new bootstrap.Toast(toastEl, { delay: 4000 }).show();
+    }
+
+    function toggleSemana(weekId) {
+        const columns = document.querySelectorAll(`.week-${weekId}-col`);
+        const icon = document.getElementById(`icon-week-${weekId}`);
+        columns.forEach(col => col.classList.toggle('hidden-col'));
+        icon.classList.toggle('fa-compress-arrows-alt');
+        icon.classList.toggle('fa-expand-arrows-alt');
+    }
+
+    function iniciarSync() {
+        const start = document.getElementById('start_date').value;
+        const end = document.getElementById('end_date').value;
+        
+        if(!start || !end) {
+            return mostrarToast("{% translate 'Por favor complete el rango de fechas' %}", 'warning');
+        }
+        
+        mostrarToast("{% translate 'Iniciando sincronización con SAP...' %}", 'primary');
+
+        fetch("{% url 'sync_manual' %}", {
+            method: "POST",
+            headers: {"Content-Type": "application/json", "X-CSRFToken": "{{ csrf_token }}"},
+            body: JSON.stringify({ fecha_inicio: start, fecha_fin: end })
+        })
+        .then(res => res.json())
+        .then(data => mostrarToast(data.status || "{% translate 'Sincronización ejecutada con éxito' %}", 'success'))
+        .catch(err => mostrarToast("{% translate 'Error al conectar con el servidor para la sincronización' %}", 'error'));
+    }
+
+    function verDrillDown(categoria, fecha) {
+        document.getElementById('dd-titulo').innerText = categoria + " (" + fecha + ")";
+        const thead = document.getElementById('dd-head');
+        const tbody = document.getElementById('dd-body');
+        
+        tbody.innerHTML = '<tr><td colspan="10" class="text-center py-4"><i class="fas fa-spinner fa-spin"></i> {% translate "Cargando datos..." %}</td></tr>';
+        new bootstrap.Modal(document.getElementById('drillDownModal')).show();
+
+        fetch(`{% url 'detalle_asientos_api' %}?categoria=${categoria}&fecha=${fecha}`)
+            .then(res => res.json())
+            .then(data => {
+                thead.innerHTML = '';
+                data.columnas.forEach(col => thead.innerHTML += `<th class="text-center">${col.etiqueta}</th>`);
+
+                tbody.innerHTML = '';
+                if(data.datos.length === 0) {
+                    tbody.innerHTML = `<tr><td colspan="${data.columnas.length}" class="text-center">{% translate "No hay registros" %}</td></tr>`;
+                    return;
+                }
+                
+                data.datos.forEach(row => {
+                    const tr = document.createElement('tr');
+                    data.columnas.forEach(col => {
+                        let valor = row[col.campo] || '-';
+                        let celdaHtml = `<td class="text-center">-</td>`;
+
+                        if (valor !== '-') {
+                            if (col.tipo === 'MONTO') {
+                                celdaHtml = `<td class="text-end fw-bold">${formatter.format(valor)}</td>`;
+                            } else if (col.tipo === 'TASA') {
+                                let tasaFormateada = parseFloat(valor).toLocaleString('de-DE', {
+                                    minimumFractionDigits: 2, maximumFractionDigits: 10
+                                });
+                                celdaHtml = `<td class="text-end text-primary">${tasaFormateada}</td>`;
+                            } else {
+                                celdaHtml = `<td class="text-center">${valor}</td>`;
+                            }
+                        }
+                        tr.innerHTML += celdaHtml;
+                    });
+                    tbody.appendChild(tr);
+                });
+            })
+            .catch(err => {
+                tbody.innerHTML = '<tr><td class="text-center text-danger">{% translate "Error cargando detalles" %}</td></tr>';
+                mostrarToast("{% translate 'Error cargando los detalles del Drill-Down' %}", 'error');
+            });
+    }
 </script>
 {% endblock %}

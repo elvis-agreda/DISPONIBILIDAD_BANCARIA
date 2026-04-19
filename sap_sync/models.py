@@ -1,5 +1,5 @@
 from decimal import Decimal
-
+from django.conf import settings
 from django.db import models
 
 
@@ -23,6 +23,13 @@ class SincronizacionLog(models.Model):
 
     tipo = models.CharField(
         "Tipo de Ejecución", max_length=10, choices=TIPO_CHOICES, default="MANUAL"
+    )
+    usuario = models.ForeignKey(
+        settings.AUTH_USER_MODEL, 
+        on_delete=models.SET_NULL, 
+        null=True, 
+        blank=True, 
+        verbose_name="Ejecutado por"
     )
     estado = models.CharField(
         "Estado", max_length=15, choices=ESTADO_CHOICES, default="INICIADO"

@@ -12,7 +12,7 @@ https://docs.djangoproject.com/en/6.0/ref/settings/
 
 import os
 from pathlib import Path
-
+from django.utils.translation import gettext_lazy as _
 import environ
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
@@ -77,6 +77,7 @@ INSTALLED_APPS = [
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
+    "django.middleware.locale.LocaleMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
@@ -144,7 +145,6 @@ HUEY = {
         "max_delay": 10.0,
         "scheduler_interval": 1,
         "periodic": True,
-        "check_worker_health": True,
         "health_check_interval": 5,
     },
 }
@@ -178,15 +178,25 @@ LOGGING = {
 # Internationalization
 # https://docs.djangoproject.com/en/6.0/topics/i18n/
 
-LANGUAGE_CODE = "en-us"
+LANGUAGE_CODE = "es-ve"
 
 TIME_ZONE = "UTC"
 
-USE_I18N = True
-
 USE_TZ = True
 
+USE_I18N = True
 
+USE_L10N = True
+
+USE_THOUSAND_SEPARATOR = True
+
+THOUSAND_SEPARATOR = '.'
+DECIMAL_SEPARATOR = ','
+NUMBER_GROUPING = 3
+LANGUAGES = [
+    ('es', _('Español')),
+    ('en', _('English')),
+]
 # Static files (CSS, JavaScript, Images)
 # https://docs.djangoproject.com/en/6.0/howto/static-files/
 
