@@ -88,6 +88,9 @@
                     <button type="button" onclick="iniciarSync()" class="btn btn-sm" style="background-color: #6eb43f; color: white; font-weight: bold;">
                         <i class="fas fa-sync-alt"></i> {% translate "Ejecutar" %}
                     </button>
+                    <button type="button" onclick="iniciarPaso8()" class="btn btn-sm btn-secondary fw-bold" title="{% translate 'Recalcular solo la conciliación y disponibilidad sin descargar SAP' %}">
+                        <i class="fas fa-calculator"></i> {% translate "Recalcular Paso 8" %}
+                    </button>
                 </form>
             </div>
         </div>
@@ -296,6 +299,31 @@
                 tbody.innerHTML = '<tr><td class="text-center text-danger">{% translate "Error cargando detalles" %}</td></tr>';
                 mostrarToast("{% translate 'Error cargando los detalles del Drill-Down' %}", 'error');
             });
+    }
+    function iniciarPaso8() {
+        const start = document.getElementById('start_date').value;
+        const end = document.getElementById('end_date').value;
+        
+        if(!start || !end) {
+            return mostrarToast("{% translate 'Por favor complete el rango de fechas' %}", 'warning');
+        }
+        
+        mostrarToast("{% translate 'Iniciando recálculo del Paso 8 (Disponibilidad)...' %}", 'primary');
+
+        fetch("{% url 'sync_paso8' %}", {
+            method: "POST",
+            headers: {"Content-Type": "application/json", "X-CSRFToken": "{{ csrf_token }}"},
+            body: JSON.stringify({ fecha_inicio: start, fecha_fin: end })
+        })
+        .then(res => res.json())
+        .then(data => {
+            if (data.error) {
+                mostrarToast(data.error, 'error');
+            } else {
+                mostrarToast(data.status || "{% translate 'Cálculo ejecutado con éxito' %}", 'success');
+            }
+        })
+        .catch(err => mostrarToast("{% translate 'Error al conectar con el servidor' %}", 'error'));
     }
 </script>
 {% endblock %}

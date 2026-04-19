@@ -6,7 +6,7 @@ from django.http import JsonResponse
 from django.contrib.auth.decorators import login_required
 from django.views.decorators.http import require_POST
 from django.utils import timezone
-
+from sap_sync.tasks import ejecutar_sync_sap, ejecutar_paso8_manual
 from core.models import DashboardConsolidado
 from sap_sync.models import TasaBCV
 from sap_sync.tasks import ejecutar_sync_sap
@@ -137,3 +137,24 @@ def detalle_asientos_api(request):
         "columnas": columnas_info,
         "datos": list(asientos)
     })
+@require_POST
+@login_required
+def disparar_paso8_manual(request):
+    try:
+        data = json.loads(request.body)
+        fecha_inicio_str = data.get('fecha_inicio')
+        fecha_fin_str = data.get('fecha_fin')
+
+        if not fecha_inicio_str or not fecha_fin_str:
+            return JsonResponse({"error": "Rango de fechas incompleto"}, status=400)
+
+        # Convertimos a objetos date
+        fecha_inicio = datetime.strptime(fecha_inicio_str, '%Y-%m-%d').date()
+        fecha_fin = datetime.strptime(fecha_fin_str, '%Y-%m-%d').date()
+
+        # Disparamos la tarea de Huey exclusiva del Paso 8
+        ejecutar_paso8_manual(fecha_inicio, fecha_fin)
+
+        return JsonResponse({"status": "Cálculo de Disponibilidad (Paso 8) iniciado correctamente"})
+    except Exception as e:
+        return JsonResponse({"error": str(e)}, status=500)

@@ -136,16 +136,10 @@ HUEY = {
     "immediate": False,
     "results": True,
     "store_none": False,
-    # 3. Configuración del Consumer
     "consumer": {
         "workers": 4,
         "worker_type": "thread",
-        "initial_delay": 0.1,
-        "backoff": 1.15,
-        "max_delay": 10.0,
-        "scheduler_interval": 1,
         "periodic": True,
-        "health_check_interval": 5,
     },
 }
 LOGGING = {
