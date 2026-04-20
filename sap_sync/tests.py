@@ -44,19 +44,17 @@ class TestConciliacionIngresos(TestCase):
         self.assertEqual(validados[0]["monto"], 500.00)
         self.assertEqual(validados[0]["documento_primario"], "DOC789")
 
-    def test_ingreso_negativo_va_a_auditoria(self):
-        """Prueba: Un monto negativo o cero debe ser enviado a auditoría (descartado)."""
-        # Monto negativo en cuenta de ingreso (anomalía contable)
+   def test_ingreso_negativo_es_validado(self):
+        """Prueba: Un monto negativo o cero ya NO debe ser enviado a auditoría."""
         pos_mala = self._crear_posicion_mock(cuenta="411050117", monto=-100.00)
         
         validados, auditoria = procesar_ingresos_bancarios([pos_mala], self.cuentas_ingreso)
 
-        self.assertEqual(len(validados), 0, "No debe validar montos negativos")
-        self.assertEqual(len(auditoria), 1, "Debe enviarse 1 registro a auditoría")
+        self.assertEqual(len(validados), 1, "Debe validar montos negativos tras la nueva regla")
+        self.assertEqual(len(auditoria), 0, "No debe enviarse a auditoría")
         
-        # Verificamos el mensaje de error
-        posicion_devuelta, motivo = auditoria[0]
-        self.assertIn("Monto negativo o cero", motivo)
+        # Verificamos que el monto haya ingresado correctamente
+        self.assertEqual(validados[0]["monto"], -100.00)
 
     def test_ignora_cuentas_que_no_son_de_ingreso(self):
         """Prueba: Cuentas de gastos o impuestos no deben ser procesadas aquí."""

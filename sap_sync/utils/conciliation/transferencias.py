@@ -25,10 +25,8 @@ def procesar_transferencias_y_divisas(posiciones, cuentas_bancarias):
             salida = salidas[0]
             entrada = entradas[0]
             
-            tipo = "COMPRA_DIVISAS" if salida.rwcur != entrada.rwcur else "TRANSFERENCIA_INTERNA"
-            
             operaciones.append({
-                "tipo": tipo,
+                "tipo": 'TRANSFERENCIA_INTERNA',
                 "salida": salida,
                 "entrada": entrada,
                 "cuenta_salida": salida.ractt,

@@ -113,14 +113,14 @@ class DashboardConsolidado(models.Model):
     documento_primario = models.CharField(
         "Doc. Primario (BELNR)", max_length=20, db_index=True
     )
-    documento_secundario = models.CharField(
-        "Doc. Secundario", max_length=50, blank=True, null=True
+    documento_secundario = models.TextField(
+        "Doc. Secundario", blank=True, null=True
     )
     referencia = models.CharField(
         "Referencia (ZUONR)", max_length=50, blank=True, null=True
     )
-    referencia1 = models.CharField(
-        "Referencia 1 (BKTXT)", max_length=50, blank=True, null=True
+    referencia1 = models.TextField(
+        "Referencia 1 (BKTXT)", blank=True, null=True
     )
 
     creado_en = models.DateTimeField(auto_now_add=True)

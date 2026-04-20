@@ -823,24 +823,83 @@ class SAPSyncOrchestrator:
             cuentas_impuestos=set_impuestos, cuentas_dif_cambio=set_dif_cambio
         )
 
+        # --- ⚡ CORRECCIÓN: HERENCIA DE SOCIOS USANDO 'partidas_restantes' ---
+        self.log.actualizar_progreso_paso("paso8", "Identificando clientes y proveedores en documentos de ingreso...")
+        
+        # Obtenemos todos los números de documento involucrados en ingresos
+        documentos_ingreso = set(pos.partida.belnr for pos in partidas_restantes)
+        
+        # Buscamos en la base de datos las líneas de estos documentos que SI tengan socio (Clase D o K)
+        lineas_socios = PartidaPosicion.objects.filter(
+            partida__belnr__in=documentos_ingreso,
+            koart__in=['D', 'K']
+        ).values('partida__belnr', 'lifnr', 'kunnr')
+
+        # Creamos un mapa rápido: belnr -> {'lifnr': ..., 'kunnr': ...}
+        mapa_socios = {l['partida__belnr']: l for l in lineas_socios}
+
+        # Asignamos el socio a nuestras posiciones de disponibilidad en memoria
+        for pos in partidas_restantes:
+            socio = mapa_socios.get(pos.partida.belnr)
+            if socio:
+                pos.lifnr = socio.get('lifnr') or ""
+                pos.kunnr = socio.get('kunnr') or ""
+        # ---------------------------------------------------------------
+
+        # Ahora usamos 'partidas_restantes'
         ingresos_validados, ingresos_aud = procesar_ingresos_bancarios(partidas_restantes, cuentas_ingresos)
 
         objetos_dashboard, objetos_auditoria = [], []
 
         for res in resultados_zr:
-            doc_primario = res["zr_belnr"] if res["zr_belnr"] != "EN_TRANSITO" else res["zp_belnr"]
-            objetos_dashboard.append(DashboardConsolidado(tipo_operacion="EGRESO", categoria="PROPUESTA_PAGO", sub_categoria="", cuenta_contable=res["cuenta_banco"], cuenta_gasto=res["cuenta_gasto"], lifnr=res["lifnr"], kunnr=res["kunnr"], monto_base=res["monto_base"], monto_total=res["monto_total"], rwcur=res.get("rwcur", ""), fecha_contabilizacion=res["fecha_contabilizacion"], documento_primario=doc_primario, documento_secundario=(f"ZP:{res['zp_belnr']} FAC:{res['factura_belnr']}" if res["factura_belnr"] else f"ZP:{res['zp_belnr']}"), referencia=res["referencia"], referencia1=res.get("referencia1", "")))
-
+            # CORRECCIÓN: Usamos las llaves actualizadas 'documento_banco' y 'documento_pago'
+            doc_primario = res["documento_banco"] if res["documento_banco"] != "EN_TRANSITO" else res["documento_pago"]
+            
+            objetos_dashboard.append(DashboardConsolidado(
+                tipo_operacion="EGRESOS", 
+                categoria="PROPUESTA_PAGO", 
+                sub_categoria="", 
+                cuenta_contable=res["cuenta_banco"], 
+                cuenta_gasto=res["cuenta_gasto"], 
+                lifnr=res["proveedor"], 
+                kunnr="", 
+                monto_base=res["monto"], 
+                monto_total=res["monto"], 
+                rwcur=res.get("rwcur", ""), 
+                fecha_contabilizacion=res["fecha"], 
+                documento_primario=doc_primario, 
+                documento_secundario=(f"ZP:{res['documento_pago']} FAC:{res['documento_factura']}" if res["documento_factura"] else f"ZP:{res['documento_pago']}"), 
+                referencia=res["referencia"], 
+                referencia1=res.get("referencia1", "")
+            ))
         for op in operaciones_internas:
             objetos_dashboard.append(DashboardConsolidado(tipo_operacion=op["tipo"], categoria=op["tipo"], sub_categoria="", cuenta_contable=f"{op['cuenta_salida']}→{op['cuenta_entrada']}", cuenta_gasto="", lifnr="", kunnr="", monto_base=op["monto_salida"], monto_total=op["monto_salida"], rwcur=op.get("rwcur_salida", ""), fecha_contabilizacion=op["fecha"], documento_primario=op["salida"].partida.belnr, documento_secundario=op["entrada"].partida.belnr, referencia=op["ref"], referencia1=(op["salida"].partida.bktxt or "").strip()))
 
         for cb in comisiones:
-            objetos_dashboard.append(DashboardConsolidado(tipo_operacion="EGRESO", categoria="COMISION_BANCARIA", sub_categoria="", cuenta_contable=cb["cuenta_banco"], cuenta_gasto=cb["cuenta_gasto"], lifnr="", kunnr="", monto_base=cb["monto"], monto_total=cb["monto"], rwcur=cb.get("rwcur", ""), fecha_contabilizacion=cb["fecha"], documento_primario=cb["documento_primario"], documento_secundario="", referencia=cb["referencia"], referencia1=cb.get("referencia1", "")))
+            objetos_dashboard.append(DashboardConsolidado(tipo_operacion="EGRESOS", categoria="COMISION_BANCARIA", sub_categoria="", cuenta_contable=cb["cuenta_banco"], cuenta_gasto=cb["cuenta_gasto"], lifnr="", kunnr="", monto_base=cb["monto"], monto_total=cb["monto"], rwcur=cb.get("rwcur", ""), fecha_contabilizacion=cb["fecha"], documento_primario=cb["documento_primario"], documento_secundario="", referencia=cb["referencia"], referencia1=cb.get("referencia1", "")))
 
         for res in ingresos_validados:
-            cat = "INGRESO_TARJETA" if res["cuenta"].endswith("4") else "INGRESO_DEPOSITO"
-            objetos_dashboard.append(DashboardConsolidado(tipo_operacion="INGRESO", categoria=cat, sub_categoria="", cuenta_contable=res["cuenta"], cuenta_gasto="", lifnr=res.get("lifnr", ""), kunnr=res.get("kunnr", ""), monto_base=res["monto"], monto_total=res["monto"], rwcur=res.get("rwcur", ""), fecha_contabilizacion=res["fecha"], documento_primario=res["documento_primario"], documento_secundario=res["documento_secundario"], referencia=res["referencia"], referencia1=res.get("referencia1", "")))
-
+            # CORRECCIÓN: Usa res["cuenta_banco"] que es como lo retorna la nueva función
+            cat = "INGRESO_TARJETA" if res["cuenta_banco"].endswith("4") else "INGRESO_DEPOSITO"
+            
+            objetos_dashboard.append(DashboardConsolidado(
+                tipo_operacion="INGRESOS", 
+                categoria=cat, 
+                sub_categoria=res.get("sub_categoria", ""),  # <-- Aquí se inyecta "COBRANZA"
+                cuenta_contable=res["cuenta_banco"], 
+                cuenta_gasto="", 
+                lifnr=res.get("lifnr", ""), 
+                kunnr=res.get("kunnr", ""), 
+                monto_base=res["monto"], 
+                monto_total=res["monto"], 
+                rwcur=res.get("rwcur", ""), 
+                fecha_contabilizacion=res["fecha"], 
+                documento_primario=res["documento_primario"], 
+                documento_secundario=res["documento_secundario"], 
+                referencia=res["referencia"], 
+                referencia1=res.get("referencia1", "")
+            ))
+        
         def _agregar_auditoria(posicion, motivo):
             objetos_auditoria.append(AsientoAuditoria(bukrs=posicion.partida.bukrs, belnr=posicion.partida.belnr, gjahr=posicion.partida.gjahr, blart=posicion.partida.blart, cuenta_contable=posicion.ractt, monto=abs(float(posicion.wsl)), rwcur=posicion.rwcur or "", fecha=posicion.partida.budat, motivo_descarte=motivo, texto_cabecera=(posicion.partida.bktxt or "").strip()))
 
