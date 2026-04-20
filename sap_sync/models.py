@@ -1,4 +1,5 @@
 from decimal import Decimal
+
 from django.conf import settings
 from django.db import models
 
@@ -25,11 +26,11 @@ class SincronizacionLog(models.Model):
         "Tipo de Ejecución", max_length=10, choices=TIPO_CHOICES, default="MANUAL"
     )
     usuario = models.ForeignKey(
-        settings.AUTH_USER_MODEL, 
-        on_delete=models.SET_NULL, 
-        null=True, 
-        blank=True, 
-        verbose_name="Ejecutado por"
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        verbose_name="Ejecutado por",
     )
     estado = models.CharField(
         "Estado", max_length=15, choices=ESTADO_CHOICES, default="INICIADO"
@@ -312,17 +313,24 @@ class TasaBCV(models.Model):
     def __str__(self):
         return f"{self.fecha} | {self.moneda}: {self.tasa}"
 
+
 class CuentaConfiguracion(models.Model):
     TIPO_CHOICES = [
-        ('IMPUESTO', 'Cuenta de Impuestos'),
-        ('DIF_CAMBIO', 'Diferencia en Cambio'),
-        ('COMISION', 'Comisión Bancaria'),
+        ("IMPUESTO", "Cuenta de Impuestos"),
+        ("DIF_CAMBIO", "Diferencia en Cambio"),
+        ("COMISION", "Comisión Bancaria"),
     ]
-    
+
     cuenta = models.CharField("Cuenta Contable", max_length=20, unique=True)
     tipo = models.CharField("Tipo de Cuenta", max_length=20, choices=TIPO_CHOICES)
-    descripcion = models.CharField("Descripción / Nombre", max_length=255, blank=True, null=True)
-    activa = models.BooleanField("Activa", default=True, help_text="Desmarca para ignorar esta cuenta sin borrarla.")
+    descripcion = models.CharField(
+        "Descripción / Nombre", max_length=255, blank=True, null=True
+    )
+    activa = models.BooleanField(
+        "Activa",
+        default=True,
+        help_text="Desmarca para ignorar esta cuenta sin borrarla.",
+    )
 
     class Meta:
         verbose_name = "Configuración de Cuenta"
@@ -331,32 +339,37 @@ class CuentaConfiguracion(models.Model):
     def __str__(self):
         return f"{self.cuenta} - {self.get_tipo_display()}"
 
+
 class MapeoCampo(models.Model):
     MODELOS_CHOICES = [
-        ('Partida', 'Cabecera (Partida)'),
-        ('PartidaPosicion', 'Detalle (PartidaPosicion)'),
-        ('Compensacion', 'Compensación'),
-        ('PartidaPosicionFiltro', 'Filtro (PartidaPosicionFiltro)')
-    ]
-    
-    TIPO_DATO_CHOICES = [
-        ('TEXTO', 'Texto / String'),
-        ('FECHA', 'Fecha SAP (AAAAMMDD)'),
-        ('DECIMAL', 'Monto Decimal'),
-        ('ENTERO', 'Número Entero'),
-        ('BOOLEANO', 'Booleano (X o Vacío)'),
+        ("Partida", "Cabecera (Partida)"),
+        ("PartidaPosicion", "Detalle (PartidaPosicion)"),
+        ("Compensacion", "Compensación"),
+        ("PartidaPosicionFiltro", "Filtro (PartidaPosicionFiltro)"),
     ]
 
-    modelo_destino = models.CharField("Modelo en Django", max_length=50, choices=MODELOS_CHOICES)
+    TIPO_DATO_CHOICES = [
+        ("TEXTO", "Texto / String"),
+        ("FECHA", "Fecha SAP (AAAAMMDD)"),
+        ("DECIMAL", "Monto Decimal"),
+        ("ENTERO", "Número Entero"),
+        ("BOOLEANO", "Booleano (X o Vacío)"),
+    ]
+
+    modelo_destino = models.CharField(
+        "Modelo en Django", max_length=50, choices=MODELOS_CHOICES
+    )
     campo_sap = models.CharField("Campo en SAP (ej. Bukrs)", max_length=50)
     campo_django = models.CharField("Campo en Django (ej. bukrs)", max_length=50)
-    tipo_dato = models.CharField("Tipo de Dato", max_length=20, choices=TIPO_DATO_CHOICES, default='TEXTO')
+    tipo_dato = models.CharField(
+        "Tipo de Dato", max_length=20, choices=TIPO_DATO_CHOICES, default="TEXTO"
+    )
     activo = models.BooleanField(default=True)
 
     class Meta:
         verbose_name = "Mapeo de Campo SAP"
         verbose_name_plural = "Configuración de Mapeos SAP"
-        unique_together = ('modelo_destino', 'campo_sap')
+        unique_together = ("modelo_destino", "campo_sap")
 
     def __str__(self):
         return f"{self.modelo_destino}: {self.campo_sap} -> {self.campo_django} ({self.tipo_dato})"

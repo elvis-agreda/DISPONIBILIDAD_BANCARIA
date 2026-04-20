@@ -4,10 +4,17 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date
 from decimal import Decimal
 
+from django.conf import settings
 from django.db.models import Q
 from django.utils import timezone
-from django.conf import settings # <-- NUEVA IMPORTACIÓN
-from sap_sync.services.mapper import GeneradorDinamicoSAP
+
+# --- MODELOS DE CORE ---
+from core.models import (
+    AsientoAuditoria,
+    DashboardConsolidado,
+    SaldoBancario,
+)
+
 # --- MODELOS DE SAP_SYNC ---
 from sap_sync.models import (
     Compensacion,
@@ -17,14 +24,7 @@ from sap_sync.models import (
     PartidaPosicionFiltro,
     TasaBCV,
 )
-
-# --- MODELOS DE CORE ---
-from core.models import (
-    AsientoAuditoria,
-    DashboardConsolidado,
-    SaldoBancario,
-)
-
+from sap_sync.services.mapper import GeneradorDinamicoSAP
 from sap_sync.services.sap_client import (
     AMBIENTE_SAP,
     PASSWORD,
@@ -39,10 +39,10 @@ from sap_sync.utils.utils import (
     procesar_comisiones_bancarias,
     procesar_ingresos_bancarios,
     procesar_transferencias_y_divisas,
-    sap_date_to_python,
 )
 
 logger = logging.getLogger(__name__)
+
 
 def _fecha_a_anio_periodo(f: date) -> tuple[str, str]:
     mes = f.month
@@ -54,22 +54,42 @@ def _fecha_a_anio_periodo(f: date) -> tuple[str, str]:
         anio = f.year - 1
     return str(anio), str(periodo).zfill(2)
 
+
 def _chunked_list(lst: list, n: int):
     for i in range(0, len(lst), n):
         yield lst[i : i + n]
+
 
 def _obtener_estado_paso(log, errores_antes: int) -> str:
     log.refresh_from_db(fields=["errores_count"])
     return "PARCIAL" if log.errores_count > errores_antes else "EXITOSO"
 
-def _ejecutar_batch_thread(client, entity_set, chunk, expand=None, use_filters=False, is_raw=False):
+
+def _ejecutar_batch_thread(
+    client, entity_set, chunk, expand=None, use_filters=False, is_raw=False
+):
     if is_raw:
-        return client.execute_batch(entity_set=entity_set, raw_filters=chunk, expand=expand)
+        return client.execute_batch(
+            entity_set=entity_set, raw_filters=chunk, expand=expand
+        )
     else:
-        return client.execute_batch(entity_set=entity_set, items=chunk, expand=expand, use_filters=use_filters)
+        return client.execute_batch(
+            entity_set=entity_set, items=chunk, expand=expand, use_filters=use_filters
+        )
+
 
 def _procesar_y_guardar_en_paralelo_sap_batch(
-    client, entity_set, chunks, db_callback, max_workers=4, expand=None, use_filters=False, is_raw=False, paso_log=None, log_obj=None, paso_id=None,
+    client,
+    entity_set,
+    chunks,
+    db_callback,
+    max_workers=4,
+    expand=None,
+    use_filters=False,
+    is_raw=False,
+    paso_log=None,
+    log_obj=None,
+    paso_id=None,
 ):
     resultados_callback = []
     client._ensure_metadata()
@@ -77,7 +97,15 @@ def _procesar_y_guardar_en_paralelo_sap_batch(
 
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         futuros = {
-            executor.submit(_ejecutar_batch_thread, client, entity_set, chunk, expand, use_filters, is_raw): (i, chunk)
+            executor.submit(
+                _ejecutar_batch_thread,
+                client,
+                entity_set,
+                chunk,
+                expand,
+                use_filters,
+                is_raw,
+            ): (i, chunk)
             for i, chunk in enumerate(chunks)
         }
 
@@ -93,15 +121,27 @@ def _procesar_y_guardar_en_paralelo_sap_batch(
                     raise
 
             if log_obj and paso_id:
-                log_obj.actualizar_progreso_paso(paso_id, f"Procesando en paralelo: {procesados}/{total_chunks} lotes de {entity_set}...")
+                log_obj.actualizar_progreso_paso(
+                    paso_id,
+                    f"Procesando en paralelo: {procesados}/{total_chunks} lotes de {entity_set}...",
+                )
 
             try:
                 registros, errores = futuro.result()
 
                 if errores and log_obj and paso_log:
                     for err in errores:
-                        contexto = {"lote_idx": chunk_idx, "contenido_muestra": chunk_data[:3] if isinstance(chunk_data, list) else chunk_data}
-                        log_obj.registrar_error(paso_log, f"Error devuelto por SAP en lote {chunk_idx}: {err}", contexto=contexto)
+                        contexto = {
+                            "lote_idx": chunk_idx,
+                            "contenido_muestra": chunk_data[:3]
+                            if isinstance(chunk_data, list)
+                            else chunk_data,
+                        }
+                        log_obj.registrar_error(
+                            paso_log,
+                            f"Error devuelto por SAP en lote {chunk_idx}: {err}",
+                            contexto=contexto,
+                        )
 
                 if registros:
                     res = db_callback(registros)
@@ -110,17 +150,32 @@ def _procesar_y_guardar_en_paralelo_sap_batch(
 
             except Exception as exc:
                 if log_obj and paso_log:
-                    contexto = {"lote_idx": chunk_idx, "tipo_error": type(exc).__name__, "contenido_muestra": chunk_data[:3] if isinstance(chunk_data, list) else chunk_data}
-                    log_obj.registrar_error(paso_log, f"Excepción crítica (Timeout/Red) en lote {chunk_idx}: {exc}", contexto=contexto)
+                    contexto = {
+                        "lote_idx": chunk_idx,
+                        "tipo_error": type(exc).__name__,
+                        "contenido_muestra": chunk_data[:3]
+                        if isinstance(chunk_data, list)
+                        else chunk_data,
+                    }
+                    log_obj.registrar_error(
+                        paso_log,
+                        f"Excepción crítica (Timeout/Red) en lote {chunk_idx}: {exc}",
+                        contexto=contexto,
+                    )
 
     return resultados_callback
+
 
 def _bulk_upsert_filtros(registros_pos: list):
     if not registros_pos:
         return
-        
-    mapper = GeneradorDinamicoSAP('PartidaPosicionFiltro')
-    campos_update = [regla.campo_django for regla in mapper.reglas if regla.campo_django not in ('bukrs', 'docnr', 'ryear', 'docln')]
+
+    mapper = GeneradorDinamicoSAP("PartidaPosicionFiltro")
+    campos_update = [
+        regla.campo_django
+        for regla in mapper.reglas
+        if regla.campo_django not in ("bukrs", "docnr", "ryear", "docln")
+    ]
 
     for chunk in _chunked_list(registros_pos, settings.DB_BATCH_SIZE_LARGE):
         bukrs_set = {p.get("Bukrs", "") for p in chunk}
@@ -128,14 +183,24 @@ def _bulk_upsert_filtros(registros_pos: list):
         ryear_set = {p.get("Ryear", "") for p in chunk}
         docln_set = {p.get("Docln", "") for p in chunk}
 
-        candidatos = PartidaPosicionFiltro.objects.filter(bukrs__in=bukrs_set, docnr__in=docnr_set, ryear__in=ryear_set, docln__in=docln_set)
+        candidatos = PartidaPosicionFiltro.objects.filter(
+            bukrs__in=bukrs_set,
+            docnr__in=docnr_set,
+            ryear__in=ryear_set,
+            docln__in=docln_set,
+        )
         existentes = {(p.bukrs, p.docnr, p.ryear, p.docln): p for p in candidatos}
 
         to_create, to_update = [], []
 
         for pos in chunk:
             datos_kwargs = mapper.construir_kwargs(pos)
-            llave = (datos_kwargs.get("bukrs", ""), datos_kwargs.get("docnr", ""), datos_kwargs.get("ryear", ""), datos_kwargs.get("docln", ""))
+            llave = (
+                datos_kwargs.get("bukrs", ""),
+                datos_kwargs.get("docnr", ""),
+                datos_kwargs.get("ryear", ""),
+                datos_kwargs.get("docln", ""),
+            )
 
             if llave in existentes:
                 obj = existentes[llave]
@@ -152,19 +217,26 @@ def _bulk_upsert_filtros(registros_pos: list):
                 existentes[llave] = obj
 
         if to_create:
-            PartidaPosicionFiltro.objects.bulk_create(to_create, batch_size=settings.DB_BATCH_SIZE_LARGE)
+            PartidaPosicionFiltro.objects.bulk_create(
+                to_create, batch_size=settings.DB_BATCH_SIZE_LARGE
+            )
         if to_update:
-            PartidaPosicionFiltro.objects.bulk_update(to_update, campos_update, batch_size=settings.DB_BATCH_SIZE_LARGE)
+            PartidaPosicionFiltro.objects.bulk_update(
+                to_update, campos_update, batch_size=settings.DB_BATCH_SIZE_LARGE
+            )
+
 
 def _guardar_posiciones_bulk(posiciones_raw: list):
     if not posiciones_raw:
         return
-        
+
     # Inicializamos el motor para el modelo PartidaPosicion
-    mapper = GeneradorDinamicoSAP('PartidaPosicion')
+    mapper = GeneradorDinamicoSAP("PartidaPosicion")
     # Extraemos qué campos deben actualizarse (excluyendo llaves primarias)
-    llaves_pk = ('bukrs', 'docnr', 'ryear', 'docln')
-    campos_update = [r.campo_django for r in mapper.reglas if r.campo_django not in llaves_pk]
+    llaves_pk = ("bukrs", "docnr", "ryear", "docln")
+    campos_update = [
+        r.campo_django for r in mapper.reglas if r.campo_django not in llaves_pk
+    ]
 
     for chunk in _chunked_list(posiciones_raw, settings.DB_BATCH_SIZE_LARGE):
         bukrs_set = {p.get("Bukrs", "") for p in chunk}
@@ -172,7 +244,12 @@ def _guardar_posiciones_bulk(posiciones_raw: list):
         ryear_set = {p.get("Ryear", "") for p in chunk}
         docln_set = {p.get("Docln", "") for p in chunk}
 
-        candidatos = PartidaPosicion.objects.filter(bukrs__in=bukrs_set, docnr__in=docnr_set, ryear__in=ryear_set, docln__in=docln_set)
+        candidatos = PartidaPosicion.objects.filter(
+            bukrs__in=bukrs_set,
+            docnr__in=docnr_set,
+            ryear__in=ryear_set,
+            docln__in=docln_set,
+        )
         existentes = {(p.bukrs, p.docnr, p.ryear, p.docln): p for p in candidatos}
 
         to_create, to_update = [], []
@@ -184,20 +261,25 @@ def _guardar_posiciones_bulk(posiciones_raw: list):
 
             # MAGIA DINÁMICA: Obtenemos el diccionario limpio desde SAP
             datos_kwargs = mapper.construir_kwargs(pos)
-            
-            llave = (datos_kwargs.get("bukrs", ""), datos_kwargs.get("docnr", ""), datos_kwargs.get("ryear", ""), datos_kwargs.get("docln", ""))
+
+            llave = (
+                datos_kwargs.get("bukrs", ""),
+                datos_kwargs.get("docnr", ""),
+                datos_kwargs.get("ryear", ""),
+                datos_kwargs.get("docln", ""),
+            )
 
             if llave in existentes:
                 obj = existentes[llave]
                 hay_cambios = False
-                
+
                 # Verificamos qué cambió exactamente
                 for campo in campos_update:
                     nuevo_valor = datos_kwargs.get(campo)
                     if getattr(obj, campo) != nuevo_valor:
                         setattr(obj, campo, nuevo_valor)
                         hay_cambios = True
-                        
+
                 if hay_cambios or obj.partida_id != partida_obj.pk:
                     obj.partida = partida_obj
                     to_update.append(obj)
@@ -208,31 +290,48 @@ def _guardar_posiciones_bulk(posiciones_raw: list):
                 existentes[llave] = obj
 
         if to_create:
-            PartidaPosicion.objects.bulk_create(to_create, batch_size=settings.DB_BATCH_SIZE_LARGE)
+            PartidaPosicion.objects.bulk_create(
+                to_create, batch_size=settings.DB_BATCH_SIZE_LARGE
+            )
         if to_update:
-            PartidaPosicion.objects.bulk_update(to_update, ["partida"] + campos_update, batch_size=settings.DB_BATCH_SIZE_LARGE)
+            PartidaPosicion.objects.bulk_update(
+                to_update,
+                ["partida"] + campos_update,
+                batch_size=settings.DB_BATCH_SIZE_LARGE,
+            )
+
 
 def _guardar_partidas_desde_sap(registros_sap: list) -> tuple[int, int]:
     if not registros_sap:
         return 0, 0
     total_creadas = total_actualizadas = 0
 
-    mapper = GeneradorDinamicoSAP('Partida')
-    campos_update = [regla.campo_django for regla in mapper.reglas if regla.campo_django not in ('bukrs', 'belnr', 'gjahr')]
+    mapper = GeneradorDinamicoSAP("Partida")
+    campos_update = [
+        regla.campo_django
+        for regla in mapper.reglas
+        if regla.campo_django not in ("bukrs", "belnr", "gjahr")
+    ]
 
     for chunk in _chunked_list(registros_sap, settings.DB_BATCH_SIZE_MEDIUM):
         bukrs_set = {d.get("Bukrs", "") for d in chunk}
         belnr_set = {d.get("Belnr", "") for d in chunk}
         gjahr_set = {d.get("Gjahr", "") for d in chunk}
 
-        candidatos = Partida.objects.filter(bukrs__in=bukrs_set, belnr__in=belnr_set, gjahr__in=gjahr_set)
+        candidatos = Partida.objects.filter(
+            bukrs__in=bukrs_set, belnr__in=belnr_set, gjahr__in=gjahr_set
+        )
         existentes = {(p.bukrs, p.belnr, p.gjahr): p for p in candidatos}
 
         to_create, to_update, posiciones_raw_list = [], [], []
 
         for doc in chunk:
             datos_kwargs = mapper.construir_kwargs(doc)
-            llave = (datos_kwargs.get("bukrs", ""), datos_kwargs.get("belnr", ""), datos_kwargs.get("gjahr", ""))
+            llave = (
+                datos_kwargs.get("bukrs", ""),
+                datos_kwargs.get("belnr", ""),
+                datos_kwargs.get("gjahr", ""),
+            )
 
             if llave in existentes:
                 p = existentes[llave]
@@ -249,20 +348,30 @@ def _guardar_partidas_desde_sap(registros_sap: list) -> tuple[int, int]:
                 existentes[llave] = p
 
         if to_create:
-            Partida.objects.bulk_create(to_create, batch_size=settings.DB_BATCH_SIZE_MEDIUM)
+            Partida.objects.bulk_create(
+                to_create, batch_size=settings.DB_BATCH_SIZE_MEDIUM
+            )
             total_creadas += len(to_create)
             # Refrescamos el diccionario existentes para las posiciones
-            nuevos = Partida.objects.filter(bukrs__in=bukrs_set, belnr__in=belnr_set, gjahr__in=gjahr_set)
+            nuevos = Partida.objects.filter(
+                bukrs__in=bukrs_set, belnr__in=belnr_set, gjahr__in=gjahr_set
+            )
             for n in nuevos:
                 existentes[(n.bukrs, n.belnr, n.gjahr)] = n
 
         if to_update:
-            Partida.objects.bulk_update(to_update, campos_update, batch_size=settings.DB_BATCH_SIZE_MEDIUM)
+            Partida.objects.bulk_update(
+                to_update, campos_update, batch_size=settings.DB_BATCH_SIZE_MEDIUM
+            )
             total_actualizadas += len(to_update)
 
         # Extraemos posiciones para enviarlas al bulk (que ya modificamos en la lección anterior)
         for doc in chunk:
-            llave_padre = (doc.get("Bukrs", ""), doc.get("Belnr", ""), doc.get("Gjahr", ""))
+            llave_padre = (
+                doc.get("Bukrs", ""),
+                doc.get("Belnr", ""),
+                doc.get("Gjahr", ""),
+            )
             partida_obj = existentes.get(llave_padre)
             if partida_obj:
                 for pos in doc.get("toPosiciones", {}).get("results", []):
@@ -275,6 +384,7 @@ def _guardar_partidas_desde_sap(registros_sap: list) -> tuple[int, int]:
 
 
 # --- CLASE ORQUESTADOR (SERVICE LAYER) ---
+
 
 class SAPSyncOrchestrator:
     """Orquesta el flujo completo de sincronización de SAP, separando la lógica del framework de colas."""
@@ -292,7 +402,11 @@ class SAPSyncOrchestrator:
         self.log.saldos_creados += sc
         self.log.saldos_actualizados += sa
         self.log.save(update_fields=["saldos_creados", "saldos_actualizados"])
-        self.log.registrar_fin_paso("paso1", {"creados": sc, "actualizados": sa}, estado=_obtener_estado_paso(self.log, err_antes))
+        self.log.registrar_fin_paso(
+            "paso1",
+            {"creados": sc, "actualizados": sa},
+            estado=_obtener_estado_paso(self.log, err_antes),
+        )
 
         # Paso 2
         self.log.verificar_cancelacion()
@@ -300,18 +414,28 @@ class SAPSyncOrchestrator:
         err_antes = self.log.errores_count
         self.log.registrar_inicio_paso("paso2", "Derivación de Cuentas HKONT")
         cuentas_derivadas = self._paso2_derivar_hkont()
-        self.log.registrar_fin_paso("paso2", {"cuentas_obtenidas": len(cuentas_derivadas)}, estado=_obtener_estado_paso(self.log, err_antes))
+        self.log.registrar_fin_paso(
+            "paso2",
+            {"cuentas_obtenidas": len(cuentas_derivadas)},
+            estado=_obtener_estado_paso(self.log, err_antes),
+        )
 
         # Paso 3
         self.log.verificar_cancelacion()
         self.log.refresh_from_db(fields=["errores_count"])
         err_antes = self.log.errores_count
         self.log.registrar_inicio_paso("paso3", "Partidas por Rango de Fechas")
-        pc, pa = self._paso3_partidas_por_fechas(fecha_inicio, fecha_fin, cuentas_derivadas)
+        pc, pa = self._paso3_partidas_por_fechas(
+            fecha_inicio, fecha_fin, cuentas_derivadas
+        )
         self.log.partidas_creadas += pc
         self.log.partidas_actualizadas += pa
         self.log.save(update_fields=["partidas_creadas", "partidas_actualizadas"])
-        self.log.registrar_fin_paso("paso3", {"creadas": pc, "actualizadas": pa}, estado=_obtener_estado_paso(self.log, err_antes))
+        self.log.registrar_fin_paso(
+            "paso3",
+            {"creadas": pc, "actualizadas": pa},
+            estado=_obtener_estado_paso(self.log, err_antes),
+        )
 
         # Paso 4
         self.log.verificar_cancelacion()
@@ -320,7 +444,11 @@ class SAPSyncOrchestrator:
         self.log.registrar_inicio_paso("paso4", "Extracción de Rangos AUGBL")
         datos_augbl = self._paso4_rangos_augbl(fecha_inicio, fecha_fin)
         total_identificados = len(datos_augbl[0]) + len(datos_augbl[1])
-        self.log.registrar_fin_paso("paso4", {"grupos_identificados": total_identificados}, estado=_obtener_estado_paso(self.log, err_antes))
+        self.log.registrar_fin_paso(
+            "paso4",
+            {"grupos_identificados": total_identificados},
+            estado=_obtener_estado_paso(self.log, err_antes),
+        )
 
         # Paso 5
         self.log.verificar_cancelacion()
@@ -330,7 +458,11 @@ class SAPSyncOrchestrator:
         n_comp = self._paso5_compensaciones(datos_augbl)
         self.log.compensaciones_proc += n_comp
         self.log.save(update_fields=["compensaciones_proc"])
-        self.log.registrar_fin_paso("paso5", {"procesadas": n_comp}, estado=_obtener_estado_paso(self.log, err_antes))
+        self.log.registrar_fin_paso(
+            "paso5",
+            {"procesadas": n_comp},
+            estado=_obtener_estado_paso(self.log, err_antes),
+        )
 
         # Paso 6
         self.log.verificar_cancelacion()
@@ -341,7 +473,11 @@ class SAPSyncOrchestrator:
         self.log.partidas_creadas += pc2
         self.log.partidas_actualizadas += pa2
         self.log.save(update_fields=["partidas_creadas", "partidas_actualizadas"])
-        self.log.registrar_fin_paso("paso6", {"creadas": pc2, "actualizadas": pa2}, estado=_obtener_estado_paso(self.log, err_antes))
+        self.log.registrar_fin_paso(
+            "paso6",
+            {"creadas": pc2, "actualizadas": pa2},
+            estado=_obtener_estado_paso(self.log, err_antes),
+        )
 
         # Paso 7
         self.log.verificar_cancelacion()
@@ -351,7 +487,11 @@ class SAPSyncOrchestrator:
         n_tasas = self._paso7_tasas_bcv(fecha_inicio, fecha_fin)
         self.log.tasas_procesadas += n_tasas
         self.log.save(update_fields=["tasas_procesadas"])
-        self.log.registrar_fin_paso("paso7", {"nuevas_procesadas": n_tasas}, estado=_obtener_estado_paso(self.log, err_antes))
+        self.log.registrar_fin_paso(
+            "paso7",
+            {"nuevas_procesadas": n_tasas},
+            estado=_obtener_estado_paso(self.log, err_antes),
+        )
 
         # Paso 8
         self.log.verificar_cancelacion()
@@ -378,7 +518,11 @@ class SAPSyncOrchestrator:
             self.log.saldos_creados += sc
             self.log.saldos_actualizados += sa
             self.log.save(update_fields=["saldos_creados", "saldos_actualizados"])
-            self.log.registrar_fin_paso("paso1", {"creados": sc, "actualizados": sa}, estado=_obtener_estado_paso(self.log, err_antes))
+            self.log.registrar_fin_paso(
+                "paso1",
+                {"creados": sc, "actualizados": sa},
+                estado=_obtener_estado_paso(self.log, err_antes),
+            )
 
         if needs_run("paso3"):
             self.log.verificar_cancelacion()
@@ -386,17 +530,29 @@ class SAPSyncOrchestrator:
             err_antes = self.log.errores_count
             self.log.registrar_inicio_paso("paso2", "Derivación de Cuentas HKONT")
             cuentas_derivadas = self._paso2_derivar_hkont()
-            self.log.registrar_fin_paso("paso2", {"cuentas_obtenidas": len(cuentas_derivadas)}, estado=_obtener_estado_paso(self.log, err_antes))
+            self.log.registrar_fin_paso(
+                "paso2",
+                {"cuentas_obtenidas": len(cuentas_derivadas)},
+                estado=_obtener_estado_paso(self.log, err_antes),
+            )
 
             self.log.verificar_cancelacion()
             self.log.refresh_from_db(fields=["errores_count"])
             err_antes = self.log.errores_count
-            self.log.registrar_inicio_paso("paso3", "Partidas por Rango de Fechas (Reintento)")
-            pc, pa = self._paso3_partidas_por_fechas(fecha_inicio, fecha_fin, cuentas_derivadas)
+            self.log.registrar_inicio_paso(
+                "paso3", "Partidas por Rango de Fechas (Reintento)"
+            )
+            pc, pa = self._paso3_partidas_por_fechas(
+                fecha_inicio, fecha_fin, cuentas_derivadas
+            )
             self.log.partidas_creadas += pc
             self.log.partidas_actualizadas += pa
             self.log.save(update_fields=["partidas_creadas", "partidas_actualizadas"])
-            self.log.registrar_fin_paso("paso3", {"creadas": pc, "actualizadas": pa}, estado=_obtener_estado_paso(self.log, err_antes))
+            self.log.registrar_fin_paso(
+                "paso3",
+                {"creadas": pc, "actualizadas": pa},
+                estado=_obtener_estado_paso(self.log, err_antes),
+            )
 
         if needs_run("paso5"):
             self.log.verificar_cancelacion()
@@ -405,37 +561,59 @@ class SAPSyncOrchestrator:
             self.log.registrar_inicio_paso("paso4", "Extracción de Rangos AUGBL")
             datos_augbl = self._paso4_rangos_augbl(fecha_inicio, fecha_fin)
             total_identificados = len(datos_augbl[0]) + len(datos_augbl[1])
-            self.log.registrar_fin_paso("paso4", {"grupos_identificados": total_identificados}, estado=_obtener_estado_paso(self.log, err_antes))
+            self.log.registrar_fin_paso(
+                "paso4",
+                {"grupos_identificados": total_identificados},
+                estado=_obtener_estado_paso(self.log, err_antes),
+            )
 
             self.log.verificar_cancelacion()
             self.log.refresh_from_db(fields=["errores_count"])
             err_antes = self.log.errores_count
-            self.log.registrar_inicio_paso("paso5", "Sincronización de Compensaciones (Reintento)")
+            self.log.registrar_inicio_paso(
+                "paso5", "Sincronización de Compensaciones (Reintento)"
+            )
             n_comp = self._paso5_compensaciones(datos_augbl)
             self.log.compensaciones_proc += n_comp
             self.log.save(update_fields=["compensaciones_proc"])
-            self.log.registrar_fin_paso("paso5", {"procesadas": n_comp}, estado=_obtener_estado_paso(self.log, err_antes))
+            self.log.registrar_fin_paso(
+                "paso5",
+                {"procesadas": n_comp},
+                estado=_obtener_estado_paso(self.log, err_antes),
+            )
 
         if needs_run("paso6"):
             self.log.verificar_cancelacion()
             self.log.refresh_from_db(fields=["errores_count"])
             err_antes = self.log.errores_count
-            self.log.registrar_inicio_paso("paso6", "Partidas complementarias por BELNR (Reintento)")
+            self.log.registrar_inicio_paso(
+                "paso6", "Partidas complementarias por BELNR (Reintento)"
+            )
             pc2, pa2 = self._paso6_partidas_por_belnr()
             self.log.partidas_creadas += pc2
             self.log.partidas_actualizadas += pa2
             self.log.save(update_fields=["partidas_creadas", "partidas_actualizadas"])
-            self.log.registrar_fin_paso("paso6", {"creadas": pc2, "actualizadas": pa2}, estado=_obtener_estado_paso(self.log, err_antes))
+            self.log.registrar_fin_paso(
+                "paso6",
+                {"creadas": pc2, "actualizadas": pa2},
+                estado=_obtener_estado_paso(self.log, err_antes),
+            )
 
         if needs_run("paso7"):
             self.log.verificar_cancelacion()
             self.log.refresh_from_db(fields=["errores_count"])
             err_antes = self.log.errores_count
-            self.log.registrar_inicio_paso("paso7", "Actualización de Tasas BCV (Reintento)")
+            self.log.registrar_inicio_paso(
+                "paso7", "Actualización de Tasas BCV (Reintento)"
+            )
             n_tasas = self._paso7_tasas_bcv(fecha_inicio, fecha_fin)
             self.log.tasas_procesadas += n_tasas
             self.log.save(update_fields=["tasas_procesadas"])
-            self.log.registrar_fin_paso("paso7", {"nuevas_procesadas": n_tasas}, estado=_obtener_estado_paso(self.log, err_antes))
+            self.log.registrar_fin_paso(
+                "paso7",
+                {"nuevas_procesadas": n_tasas},
+                estado=_obtener_estado_paso(self.log, err_antes),
+            )
 
         if needs_run("paso8"):
             self.log.verificar_cancelacion()
@@ -450,45 +628,76 @@ class SAPSyncOrchestrator:
         filtro_saldos = f"Ryear eq '{anio}'"
 
         self.log.actualizar_progreso_paso("paso1", "Extrayendo registros de SAP...")
-        registros, errores = client.get_data("ZFI_SALDO_BANCARIO", filters=filtro_saldos)
+        registros, errores = client.get_data(
+            "ZFI_SALDO_BANCARIO", filters=filtro_saldos
+        )
 
         if errores:
             for err in errores:
-                self.log.registrar_error(1, err, contexto={"filtro_saldos": filtro_saldos})
+                self.log.registrar_error(
+                    1, err, contexto={"filtro_saldos": filtro_saldos}
+                )
             if not registros:
                 raise RuntimeError(f"Error fatal en SALDOS_BANCARIOS: {errores}")
 
         creados = actualizados = 0
         campos_tsl = ["tslvt"] + [f"tsl{str(i).zfill(2)}" for i in range(1, 17)]
 
-        self.log.actualizar_progreso_paso("paso1", f"Guardando {len(registros or [])} registros en BD...")
+        self.log.actualizar_progreso_paso(
+            "paso1", f"Guardando {len(registros or [])} registros en BD..."
+        )
         for chunk in _chunked_list(registros or [], 1000):
             bukrs_set = {r["Bukrs"] for r in chunk}
             ryear_set = {r["Ryear"] for r in chunk}
             hkont_set = {r["Hkont"] for r in chunk}
 
-            candidatos = SaldoBancario.objects.filter(bukrs__in=bukrs_set, ryear__in=ryear_set, hkont__in=hkont_set)
-            existentes = {(p.bukrs, p.ryear, p.hkont, p.waers, p.drcrk): p for p in candidatos}
+            candidatos = SaldoBancario.objects.filter(
+                bukrs__in=bukrs_set, ryear__in=ryear_set, hkont__in=hkont_set
+            )
+            existentes = {
+                (p.bukrs, p.ryear, p.hkont, p.waers, p.drcrk): p for p in candidatos
+            }
 
             to_create, to_update = [], []
 
             for rec in chunk:
-                llave = (rec["Bukrs"], rec["Ryear"], rec["Hkont"], rec["Waers"], rec["Drcrk"])
+                llave = (
+                    rec["Bukrs"],
+                    rec["Ryear"],
+                    rec["Hkont"],
+                    rec["Waers"],
+                    rec["Drcrk"],
+                )
                 valores = {
                     "tslvt": Decimal(str(rec.get("Tslvt", 0) or 0)),
-                    **{f"tsl{str(i).zfill(2)}": Decimal(str(rec.get(f"Tsl{str(i).zfill(2)}", 0) or 0)) for i in range(1, 17)},
+                    **{
+                        f"tsl{str(i).zfill(2)}": Decimal(
+                            str(rec.get(f"Tsl{str(i).zfill(2)}", 0) or 0)
+                        )
+                        for i in range(1, 17)
+                    },
                 }
 
                 if llave in existentes:
                     obj = existentes[llave]
-                    hay_diferencia = any(Decimal(str(getattr(obj, f, 0) or 0)) != valores[f] for f in campos_tsl)
+                    hay_diferencia = any(
+                        Decimal(str(getattr(obj, f, 0) or 0)) != valores[f]
+                        for f in campos_tsl
+                    )
                     if hay_diferencia:
                         for f in campos_tsl:
                             setattr(obj, f, valores[f])
                         obj.sincronizado_en = timezone.now()
                         to_update.append(obj)
                 else:
-                    obj = SaldoBancario(bukrs=llave[0], ryear=llave[1], hkont=llave[2], waers=llave[3], drcrk=llave[4], **valores)
+                    obj = SaldoBancario(
+                        bukrs=llave[0],
+                        ryear=llave[1],
+                        hkont=llave[2],
+                        waers=llave[3],
+                        drcrk=llave[4],
+                        **valores,
+                    )
                     to_create.append(obj)
                     existentes[llave] = obj
 
@@ -496,7 +705,9 @@ class SAPSyncOrchestrator:
                 SaldoBancario.objects.bulk_create(to_create, batch_size=1000)
                 creados += len(to_create)
             if to_update:
-                SaldoBancario.objects.bulk_update(to_update, campos_tsl + ["sincronizado_en"], batch_size=1000)
+                SaldoBancario.objects.bulk_update(
+                    to_update, campos_tsl + ["sincronizado_en"], batch_size=1000
+                )
                 actualizados += len(to_update)
 
         return creados, actualizados
@@ -511,12 +722,16 @@ class SAPSyncOrchestrator:
                 cuentas.add(f"{base}{sufijo}")
         return sorted(cuentas)
 
-    def _paso3_partidas_por_fechas(self, fecha_inicio: date, fecha_fin: date, cuentas: list[str]) -> tuple[int, int]:
+    def _paso3_partidas_por_fechas(
+        self, fecha_inicio: date, fecha_fin: date, cuentas: list[str]
+    ) -> tuple[int, int]:
         client = SAPODataClient(base_url=SAPServiceURL.PARTIDAS)
         total_creadas = total_actualizadas = 0
 
         filtro_fecha = f"Budat ge {fecha_sap(str(fecha_inicio))} and Budat le {fecha_sap(str(fecha_fin))}"
-        filtros_posiciones = [f"({filtro_fecha}) and Ractt eq '{cuenta}'" for cuenta in cuentas]
+        filtros_posiciones = [
+            f"({filtro_fecha}) and Ractt eq '{cuenta}'" for cuenta in cuentas
+        ]
 
         chunks_filtros_pos = list(_chunked_list(filtros_posiciones, 50))
 
@@ -524,13 +739,29 @@ class SAPSyncOrchestrator:
             _bulk_upsert_filtros(registros)
 
         _procesar_y_guardar_en_paralelo_sap_batch(
-            client, "ZFI_PARTIDAS_POSICIONES", chunks_filtros_pos, db_callback=cb_posiciones,
-            max_workers=settings.SAP_MAX_WORKERS_DEFAULT, is_raw=True, paso_log=3, log_obj=self.log, paso_id="paso3",
+            client,
+            "ZFI_PARTIDAS_POSICIONES",
+            chunks_filtros_pos,
+            db_callback=cb_posiciones,
+            max_workers=settings.SAP_MAX_WORKERS_DEFAULT,
+            is_raw=True,
+            paso_log=3,
+            log_obj=self.log,
+            paso_id="paso3",
         )
 
-        llaves_filtro = PartidaPosicionFiltro.objects.filter(budat__gte=fecha_inicio, budat__lte=fecha_fin).values("bukrs", "docnr", "ryear").distinct()
+        llaves_filtro = (
+            PartidaPosicionFiltro.objects.filter(
+                budat__gte=fecha_inicio, budat__lte=fecha_fin
+            )
+            .values("bukrs", "docnr", "ryear")
+            .distinct()
+        )
 
-        pks_batch = [{"Bukrs": item["bukrs"], "Belnr": item["docnr"], "Gjahr": item["ryear"]} for item in llaves_filtro]
+        pks_batch = [
+            {"Bukrs": item["bukrs"], "Belnr": item["docnr"], "Gjahr": item["ryear"]}
+            for item in llaves_filtro
+        ]
         if not pks_batch:
             return 0, 0
 
@@ -540,8 +771,16 @@ class SAPSyncOrchestrator:
             return _guardar_partidas_desde_sap(registros)
 
         resultados = _procesar_y_guardar_en_paralelo_sap_batch(
-            client, "ZFI_PARTIDAS", chunks_pks_cab, db_callback=cb_cabeceras,
-            max_workers=settings.SAP_MAX_WORKERS_DEFAULT, expand="toPosiciones", use_filters=True, paso_log=3, log_obj=self.log, paso_id="paso3",
+            client,
+            "ZFI_PARTIDAS",
+            chunks_pks_cab,
+            db_callback=cb_cabeceras,
+            max_workers=settings.SAP_MAX_WORKERS_DEFAULT,
+            expand="toPosiciones",
+            use_filters=True,
+            paso_log=3,
+            log_obj=self.log,
+            paso_id="paso3",
         )
 
         for c, a in resultados:
@@ -551,15 +790,18 @@ class SAPSyncOrchestrator:
         return total_creadas, total_actualizadas
 
     def _paso4_rangos_augbl(self, fecha_inicio: date, fecha_fin: date) -> tuple:
-        augbls = (PartidaPosicion.objects.filter(partida__budat__gte=fecha_inicio, partida__budat__lte=fecha_fin)
+        augbls = (
+            PartidaPosicion.objects.filter(
+                partida__budat__gte=fecha_inicio, partida__budat__lte=fecha_fin
+            )
             .exclude(augbl="")
-            .exclude(augbl__isnull=True) 
+            .exclude(augbl__isnull=True)
             .values_list("augbl", flat=True)
             .distinct()
         )
 
-        lista_limpia = [a for a in augbls if a and a.strip()] 
-        
+        lista_limpia = [a for a in augbls if a and a.strip()]
+
         try:
             lista_ordenada = sorted(lista_limpia, key=int)
         except ValueError:
@@ -617,8 +859,12 @@ class SAPSyncOrchestrator:
 
         def cb_compensaciones(registros):
             count_local = 0
-            mapper = GeneradorDinamicoSAP('Compensacion')
-            campos_update = [regla.campo_django for regla in mapper.reglas if regla.campo_django not in ('bukrs', 'belnr', 'gjahr', 'buzei')]
+            mapper = GeneradorDinamicoSAP("Compensacion")
+            campos_update = [
+                regla.campo_django
+                for regla in mapper.reglas
+                if regla.campo_django not in ("bukrs", "belnr", "gjahr", "buzei")
+            ]
 
             for chunk_rec in _chunked_list(registros, settings.DB_BATCH_SIZE_LARGE):
                 bukrs_set = {r.get("Bukrs", "") for r in chunk_rec}
@@ -626,14 +872,26 @@ class SAPSyncOrchestrator:
                 gjahr_set = {r.get("Gjahr", "") for r in chunk_rec}
                 buzei_set = {r.get("Buzei", "") for r in chunk_rec}
 
-                candidatos = Compensacion.objects.filter(bukrs__in=bukrs_set, belnr__in=belnr_set, gjahr__in=gjahr_set, buzei__in=buzei_set)
-                existentes = {(p.bukrs, p.belnr, p.gjahr, p.buzei): p for p in candidatos}
+                candidatos = Compensacion.objects.filter(
+                    bukrs__in=bukrs_set,
+                    belnr__in=belnr_set,
+                    gjahr__in=gjahr_set,
+                    buzei__in=buzei_set,
+                )
+                existentes = {
+                    (p.bukrs, p.belnr, p.gjahr, p.buzei): p for p in candidatos
+                }
 
                 to_create, to_update = [], []
 
                 for rec in chunk_rec:
                     datos_kwargs = mapper.construir_kwargs(rec)
-                    llave = (datos_kwargs.get("bukrs", ""), datos_kwargs.get("belnr", ""), datos_kwargs.get("gjahr", ""), datos_kwargs.get("buzei", ""))
+                    llave = (
+                        datos_kwargs.get("bukrs", ""),
+                        datos_kwargs.get("belnr", ""),
+                        datos_kwargs.get("gjahr", ""),
+                        datos_kwargs.get("buzei", ""),
+                    )
 
                     if llave in existentes:
                         obj = existentes[llave]
@@ -650,40 +908,66 @@ class SAPSyncOrchestrator:
                         existentes[llave] = obj
 
                 if to_create:
-                    Compensacion.objects.bulk_create(to_create, batch_size=settings.DB_BATCH_SIZE_LARGE)
+                    Compensacion.objects.bulk_create(
+                        to_create, batch_size=settings.DB_BATCH_SIZE_LARGE
+                    )
                     count_local += len(to_create)
                 if to_update:
-                    Compensacion.objects.bulk_update(to_update, campos_update, batch_size=settings.DB_BATCH_SIZE_LARGE)
+                    Compensacion.objects.bulk_update(
+                        to_update,
+                        campos_update,
+                        batch_size=settings.DB_BATCH_SIZE_LARGE,
+                    )
                     count_local += len(to_update)
             return count_local
 
         resultados = _procesar_y_guardar_en_paralelo_sap_batch(
-            client, "ZFI_COMPENSACIONES", chunks_filtros, db_callback=cb_compensaciones,
-            max_workers=settings.SAP_MAX_WORKERS_HEAVY, is_raw=True, paso_log=5, log_obj=self.log, paso_id="paso5",
+            client,
+            "ZFI_COMPENSACIONES",
+            chunks_filtros,
+            db_callback=cb_compensaciones,
+            max_workers=settings.SAP_MAX_WORKERS_HEAVY,
+            is_raw=True,
+            paso_log=5,
+            log_obj=self.log,
+            paso_id="paso5",
         )
 
         return sum(resultados) if resultados else 0
 
     def _paso6_partidas_por_belnr(self) -> tuple[int, int]:
-        llaves_comp = list(Compensacion.objects.values("bukrs", "belnr", "gjahr").distinct())
+        llaves_comp = list(
+            Compensacion.objects.values("bukrs", "belnr", "gjahr").distinct()
+        )
         if not llaves_comp:
             return 0, 0
 
         belnrs_requeridos = [item["belnr"] for item in llaves_comp]
-        existentes_qs = Partida.objects.filter(belnr__in=belnrs_requeridos).values_list("bukrs", "belnr", "gjahr")
+        existentes_qs = Partida.objects.filter(belnr__in=belnrs_requeridos).values_list(
+            "bukrs", "belnr", "gjahr"
+        )
         existentes_set = set(existentes_qs)
 
-        llaves_faltantes = [item for item in llaves_comp if (item["bukrs"], item["belnr"], item["gjahr"]) not in existentes_set]
+        llaves_faltantes = [
+            item
+            for item in llaves_comp
+            if (item["bukrs"], item["belnr"], item["gjahr"]) not in existentes_set
+        ]
 
         if not llaves_faltantes:
-            self.log.actualizar_progreso_paso("paso6", "Todos los documentos ya existen localmente. Omitiendo SAP.")
+            self.log.actualizar_progreso_paso(
+                "paso6", "Todos los documentos ya existen localmente. Omitiendo SAP."
+            )
             return 0, 0
 
         client = SAPODataClient(base_url=SAPServiceURL.PARTIDAS)
         filtros_partidas = []
 
         for chunk_llaves in _chunked_list(llaves_faltantes, 10):
-            partes_or = [f"(Bukrs eq '{item['bukrs']}' and Belnr eq '{item['belnr']}' and Gjahr eq '{item['gjahr']}')" for item in chunk_llaves]
+            partes_or = [
+                f"(Bukrs eq '{item['bukrs']}' and Belnr eq '{item['belnr']}' and Gjahr eq '{item['gjahr']}')"
+                for item in chunk_llaves
+            ]
             filtros_partidas.append(" or ".join(partes_or))
 
         chunks_filtros = list(_chunked_list(filtros_partidas, 10))
@@ -692,8 +976,16 @@ class SAPSyncOrchestrator:
             return _guardar_partidas_desde_sap(registros)
 
         resultados = _procesar_y_guardar_en_paralelo_sap_batch(
-            client, "ZFI_PARTIDAS", chunks_filtros, db_callback=cb_partidas_compo,
-            max_workers=settings.SAP_MAX_WORKERS_HEAVY, expand="toPosiciones", is_raw=True, paso_log=6, log_obj=self.log, paso_id="paso6",
+            client,
+            "ZFI_PARTIDAS",
+            chunks_filtros,
+            db_callback=cb_partidas_compo,
+            max_workers=settings.SAP_MAX_WORKERS_HEAVY,
+            expand="toPosiciones",
+            is_raw=True,
+            paso_log=6,
+            log_obj=self.log,
+            paso_id="paso6",
         )
 
         if not resultados:
@@ -705,15 +997,27 @@ class SAPSyncOrchestrator:
         return total_creadas, total_actualizadas
 
     def _paso7_tasas_bcv(self, fecha_inicio: date, fecha_fin: date) -> int:
-        cliente_tasas = SAPTasaBCVClient(username=USERNAME, password=PASSWORD, sap_client=AMBIENTE_SAP)
+        cliente_tasas = SAPTasaBCVClient(
+            username=USERNAME, password=PASSWORD, sap_client=AMBIENTE_SAP
+        )
 
-        fechas_unicas = list(Partida.objects.filter(bldat__gte=fecha_inicio, bldat__lte=fecha_fin).values_list("bldat", flat=True).distinct())
+        fechas_unicas = list(
+            Partida.objects.filter(bldat__gte=fecha_inicio, bldat__lte=fecha_fin)
+            .values_list("bldat", flat=True)
+            .distinct()
+        )
         if not fechas_unicas:
             return 0
 
-        self.log.actualizar_progreso_paso("paso7", f"Consultando {len(fechas_unicas)} fechas...")
+        self.log.actualizar_progreso_paso(
+            "paso7", f"Consultando {len(fechas_unicas)} fechas..."
+        )
 
-        fechas_en_bd = set(TasaBCV.objects.filter(fecha__in=fechas_unicas).values_list("fecha", flat=True).distinct())
+        fechas_en_bd = set(
+            TasaBCV.objects.filter(fecha__in=fechas_unicas)
+            .values_list("fecha", flat=True)
+            .distinct()
+        )
         fechas_a_consultar = [f for f in fechas_unicas if f not in fechas_en_bd]
         tasas_sap = cliente_tasas.obtener_tasas_lote(fechas_a_consultar)
 
@@ -723,23 +1027,45 @@ class SAPSyncOrchestrator:
                 moneda = t.get("MONEDA", "")
                 if not moneda:
                     continue
-                TasaBCV.objects.update_or_create(fecha=fecha_key, moneda=moneda, defaults={"tasa": t.get("TASA", 0), "descripcion": t.get("DESCRIPCION", "")})
+                TasaBCV.objects.update_or_create(
+                    fecha=fecha_key,
+                    moneda=moneda,
+                    defaults={
+                        "tasa": t.get("TASA", 0),
+                        "descripcion": t.get("DESCRIPCION", ""),
+                    },
+                )
                 n_tasas_nuevas += 1
 
         return n_tasas_nuevas
 
     def paso8_calculo_disponibilidad(self, fecha_inicio, fecha_fin):
-        self.log.registrar_inicio_paso("paso8", "Conciliación y Cálculo de Disponibilidad")
+        self.log.registrar_inicio_paso(
+            "paso8", "Conciliación y Cálculo de Disponibilidad"
+        )
 
         # Cargar configuración desde la BD (Añadido en Fase 1)
         cuentas_conf = CuentaConfiguracion.objects.filter(activa=True)
-        set_impuestos = set(cuentas_conf.filter(tipo='IMPUESTO').values_list('cuenta', flat=True))
-        set_dif_cambio = set(cuentas_conf.filter(tipo='DIF_CAMBIO').values_list('cuenta', flat=True))
-        set_comision = set(cuentas_conf.filter(tipo='COMISION').values_list('cuenta', flat=True))
+        set_impuestos = set(
+            cuentas_conf.filter(tipo="IMPUESTO").values_list("cuenta", flat=True)
+        )
+        set_dif_cambio = set(
+            cuentas_conf.filter(tipo="DIF_CAMBIO").values_list("cuenta", flat=True)
+        )
+        set_comision = set(
+            cuentas_conf.filter(tipo="COMISION").values_list("cuenta", flat=True)
+        )
 
         hkonts_base = SaldoBancario.objects.values_list("hkont", flat=True).distinct()
 
-        cuentas_reales, cuentas_todas, cuentas_t_2, cuentas_t_3, cuentas_egresos, cuentas_ingresos = set(), set(), set(), set(), set(), set()
+        (
+            cuentas_reales,
+            cuentas_todas,
+            cuentas_t_2,
+            cuentas_t_3,
+            cuentas_egresos,
+            cuentas_ingresos,
+        ) = set(), set(), set(), set(), set(), set()
 
         for hkont in hkonts_base:
             cuentas_reales.add(hkont)
@@ -748,24 +1074,77 @@ class SAPSyncOrchestrator:
                 cta = f"{base}{sufijo}"
                 cuentas_todas.add(cta)
                 suf_str = str(sufijo)
-                if suf_str in ("1", "2", "7"): cuentas_egresos.add(cta)
-                if suf_str in ("3", "4", "6"): cuentas_ingresos.add(cta)
-                if suf_str == "2": cuentas_t_2.add(cta)
-                if suf_str == "3": cuentas_t_3.add(cta)
+                if suf_str in ("1", "2", "7"):
+                    cuentas_egresos.add(cta)
+                if suf_str in ("3", "4", "6"):
+                    cuentas_ingresos.add(cta)
+                if suf_str == "2":
+                    cuentas_t_2.add(cta)
+                if suf_str == "3":
+                    cuentas_t_3.add(cta)
 
-        q_base = Q(ractt__in=cuentas_todas | set_comision | cuentas_reales, partida__budat__gte=fecha_inicio, partida__budat__lte=fecha_fin)
+        q_base = Q(
+            ractt__in=cuentas_todas | set_comision | cuentas_reales,
+            partida__budat__gte=fecha_inicio,
+            partida__budat__lte=fecha_fin,
+        )
 
-        augbl_list = (PartidaPosicion.objects.filter(q_base).exclude(augbl="").exclude(augbl__isnull=True).exclude(partida__blart="SK").values_list("augbl", flat=True).distinct())
+        augbl_list = (
+            PartidaPosicion.objects.filter(q_base)
+            .exclude(augbl="")
+            .exclude(augbl__isnull=True)
+            .values_list("augbl", flat=True)
+            .distinct()
+        )
         augbl_set = set(augbl_list)
 
-        zps_belnrs = set(Partida.objects.filter(blart="ZP").filter(Q(budat__gte=fecha_inicio, budat__lte=fecha_fin) | Q(belnr__in=augbl_set)).values_list("belnr", flat=True))
-        zrs_relacionados = set(PartidaPosicion.objects.filter(partida__belnr__in=zps_belnrs).exclude(augbl="").exclude(augbl__in=zps_belnrs).exclude(partida__blart="SK").values_list("augbl", flat=True))
-        facturas_pagadas_por_zp = set(PartidaPosicion.objects.filter(augbl__in=zps_belnrs).exclude(partida__blart="SK").values_list("partida__belnr", flat=True))
+        zps_belnrs = set(
+            Partida.objects.filter(blart="ZP")
+            .filter(
+                Q(budat__gte=fecha_inicio, budat__lte=fecha_fin)
+                | Q(belnr__in=augbl_set)
+            )
+            .values_list("belnr", flat=True)
+        )
+        zrs_relacionados = set(
+            PartidaPosicion.objects.filter(partida__belnr__in=zps_belnrs)
+            .exclude(augbl="")
+            .exclude(augbl__in=zps_belnrs)
+            .values_list("augbl", flat=True)
+        )
+        facturas_pagadas_por_zp = set(
+            PartidaPosicion.objects.filter(augbl__in=zps_belnrs).values_list(
+                "partida__belnr", flat=True
+            )
+        )
 
-        q_final = (q_base | Q(partida__belnr__in=augbl_set) | Q(augbl__in=augbl_set) | Q(partida__belnr__in=zps_belnrs) | Q(partida__belnr__in=zrs_relacionados) | Q(partida__belnr__in=facturas_pagadas_por_zp))
+        q_final = (
+            q_base
+            | Q(partida__belnr__in=augbl_set)
+            | Q(augbl__in=augbl_set)
+            | Q(partida__belnr__in=zps_belnrs)
+            | Q(partida__belnr__in=zrs_relacionados)
+            | Q(partida__belnr__in=facturas_pagadas_por_zp)
+        )
 
-        partidas_db = (PartidaPosicion.objects.filter(q_final).exclude(partida__blart="SK").select_related("partida")
-            .only("partida__id", "partida__belnr", "partida__blart", "partida__budat", "partida__bktxt", "ractt", "wsl", "rwcur", "lifnr", "kunnr", "augbl", "zuonr", "koart")
+        partidas_db = (
+            PartidaPosicion.objects.filter(q_final)
+            .select_related("partida")
+            .only(
+                "partida__id",
+                "partida__belnr",
+                "partida__blart",
+                "partida__budat",
+                "partida__bktxt",
+                "ractt",
+                "wsl",
+                "rwcur",
+                "lifnr",
+                "kunnr",
+                "augbl",
+                "zuonr",
+                "koart",
+            )
             .iterator(chunk_size=10_000)
         )
 
@@ -779,8 +1158,13 @@ class SAPSyncOrchestrator:
             else:
                 todas_posiciones.append(pos)
 
-        operaciones_internas, todas_posiciones = procesar_transferencias_y_divisas(todas_posiciones, cuentas_todas)
-        comisiones, todas_posiciones = procesar_comisiones_bancarias(todas_posiciones, mapa_banco_real, cuentas_comision=set_comision)
+        # ⚡ INYECCIÓN DE set_dif_cambio a la función de transferencias
+        operaciones_internas, todas_posiciones = procesar_transferencias_y_divisas(
+            todas_posiciones, cuentas_todas, set_dif_cambio
+        )
+        comisiones, todas_posiciones = procesar_comisiones_bancarias(
+            todas_posiciones, mapa_banco_real, cuentas_comision=set_comision
+        )
 
         facturas_agrupadas = defaultdict(list)
         partidas_restantes, balde_solo_zps, balde_solo_zrs = [], [], []
@@ -791,16 +1175,23 @@ class SAPSyncOrchestrator:
             cuenta_str = pos.ractt or ""
 
             if belnr_doc in zps_belnrs or pos.partida.blart == "ZP":
-                if belnr_doc not in zps_belnrs: zps_belnrs.add(belnr_doc)
-                if cuenta_str in cuentas_todas: balde_solo_zps.append(pos)
+                if belnr_doc not in zps_belnrs:
+                    zps_belnrs.add(belnr_doc)
+                if cuenta_str in cuentas_todas:
+                    balde_solo_zps.append(pos)
                 else:
                     facturas_agrupadas[belnr_doc].append(pos)
                     mapa_factura_zp[belnr_doc] = belnr_doc
 
-            elif belnr_doc in zrs_relacionados or (pos.partida.blart == "ZR" and cuenta_str in cuentas_egresos):
-                if cuenta_str in cuentas_todas: balde_solo_zrs.append(pos)
+            elif belnr_doc in zrs_relacionados or (
+                pos.partida.blart == "ZR" and cuenta_str in cuentas_egresos
+            ):
+                if cuenta_str in cuentas_todas:
+                    balde_solo_zrs.append(pos)
 
-            elif belnr_doc in facturas_pagadas_por_zp or (pos.augbl and pos.augbl in zps_belnrs):
+            elif belnr_doc in facturas_pagadas_por_zp or (
+                pos.augbl and pos.augbl in zps_belnrs
+            ):
                 if pos.augbl and pos.augbl in zps_belnrs:
                     mapa_factura_zp[belnr_doc] = pos.augbl
                 facturas_agrupadas[belnr_doc].append(pos)
@@ -812,120 +1203,240 @@ class SAPSyncOrchestrator:
             if len(augbls_presentes) == 1:
                 unico_augbl = list(augbls_presentes)[0]
                 for p in posiciones_factura:
-                    if not p.augbl: p.augbl = unico_augbl
+                    if not p.augbl:
+                        p.augbl = unico_augbl
             elif len(augbls_presentes) == 0:
                 doc_pago_zp = mapa_factura_zp.get(belnr_factura, "")
                 for p in posiciones_factura:
-                    if not p.augbl: p.augbl = doc_pago_zp
+                    if not p.augbl:
+                        p.augbl = doc_pago_zp
 
         resultados_zr, zps_aud, zrs_aud = conciliar_cadena_zr_zp_facturas(
-            balde_solo_zps, balde_solo_zrs, facturas_agrupadas, mapa_factura_zp,
-            cuentas_impuestos=set_impuestos, cuentas_dif_cambio=set_dif_cambio
+            balde_solo_zps,
+            balde_solo_zrs,
+            facturas_agrupadas,
+            mapa_factura_zp,
+            cuentas_impuestos=set_impuestos,
+            cuentas_dif_cambio=set_dif_cambio,
         )
 
         # --- ⚡ CORRECCIÓN: HERENCIA DE SOCIOS USANDO 'partidas_restantes' ---
-        self.log.actualizar_progreso_paso("paso8", "Identificando clientes y proveedores en documentos de ingreso...")
-        
+        self.log.actualizar_progreso_paso(
+            "paso8", "Identificando clientes y proveedores en documentos de ingreso..."
+        )
+
         # Obtenemos todos los números de documento involucrados en ingresos
         documentos_ingreso = set(pos.partida.belnr for pos in partidas_restantes)
-        
+
         # Buscamos en la base de datos las líneas de estos documentos que SI tengan socio (Clase D o K)
         lineas_socios = PartidaPosicion.objects.filter(
-            partida__belnr__in=documentos_ingreso,
-            koart__in=['D', 'K']
-        ).values('partida__belnr', 'lifnr', 'kunnr')
+            partida__belnr__in=documentos_ingreso, koart__in=["D", "K"]
+        ).values("partida__belnr", "lifnr", "kunnr")
 
         # Creamos un mapa rápido: belnr -> {'lifnr': ..., 'kunnr': ...}
-        mapa_socios = {l['partida__belnr']: l for l in lineas_socios}
+        mapa_socios = {l["partida__belnr"]: l for l in lineas_socios}
 
         # Asignamos el socio a nuestras posiciones de disponibilidad en memoria
         for pos in partidas_restantes:
             socio = mapa_socios.get(pos.partida.belnr)
             if socio:
-                pos.lifnr = socio.get('lifnr') or ""
-                pos.kunnr = socio.get('kunnr') or ""
+                pos.lifnr = socio.get("lifnr") or ""
+                pos.kunnr = socio.get("kunnr") or ""
         # ---------------------------------------------------------------
 
         # Ahora usamos 'partidas_restantes'
-        ingresos_validados, ingresos_aud = procesar_ingresos_bancarios(partidas_restantes, cuentas_ingresos)
+        ingresos_validados, ingresos_aud = procesar_ingresos_bancarios(
+            partidas_restantes, cuentas_ingresos
+        )
 
         objetos_dashboard, objetos_auditoria = [], []
 
         for res in resultados_zr:
             # CORRECCIÓN: Usamos las llaves actualizadas 'documento_banco' y 'documento_pago'
-            doc_primario = res["documento_banco"] if res["documento_banco"] != "EN_TRANSITO" else res["documento_pago"]
-            
-            objetos_dashboard.append(DashboardConsolidado(
-                tipo_operacion="EGRESOS", 
-                categoria="PROPUESTA_PAGO", 
-                sub_categoria="", 
-                cuenta_contable=res["cuenta_banco"], 
-                cuenta_gasto=res["cuenta_gasto"], 
-                lifnr=res["proveedor"], 
-                kunnr="", 
-                monto_base=res["monto"], 
-                monto_total=res["monto"], 
-                rwcur=res.get("rwcur", ""), 
-                fecha_contabilizacion=res["fecha"], 
-                documento_primario=doc_primario, 
-                documento_secundario=(f"ZP:{res['documento_pago']} FAC:{res['documento_factura']}" if res["documento_factura"] else f"ZP:{res['documento_pago']}"), 
-                referencia=res["referencia"], 
-                referencia1=res.get("referencia1", "")
-            ))
+            doc_primario = (
+                res["documento_banco"]
+                if res["documento_banco"] != "EN_TRANSITO"
+                else res["documento_pago"]
+            )
+
+            objetos_dashboard.append(
+                DashboardConsolidado(
+                    tipo_operacion="EGRESOS",
+                    categoria="PROPUESTA_PAGO",
+                    sub_categoria="",
+                    cuenta_contable=res["cuenta_banco"],
+                    cuenta_gasto=res["cuenta_gasto"],
+                    lifnr=res["proveedor"],
+                    kunnr="",
+                    monto_base=res["monto"],
+                    monto_total=res["monto"],
+                    rwcur=res.get("rwcur", ""),
+                    fecha_contabilizacion=res["fecha"],
+                    documento_primario=doc_primario,
+                    documento_secundario=(
+                        f"ZP:{res['documento_pago']} FAC:{res['documento_factura']}"
+                        if res["documento_factura"]
+                        else f"ZP:{res['documento_pago']}"
+                    ),
+                    referencia=res["referencia"],
+                    referencia1=res.get("referencia1", ""),
+                )
+            )
         for op in operaciones_internas:
-            objetos_dashboard.append(DashboardConsolidado(tipo_operacion=op["tipo"], categoria=op["tipo"], sub_categoria="", cuenta_contable=f"{op['cuenta_salida']}→{op['cuenta_entrada']}", cuenta_gasto="", lifnr="", kunnr="", monto_base=op["monto_salida"], monto_total=op["monto_salida"], rwcur=op.get("rwcur_salida", ""), fecha_contabilizacion=op["fecha"], documento_primario=op["salida"].partida.belnr, documento_secundario=op["entrada"].partida.belnr, referencia=op["ref"], referencia1=(op["salida"].partida.bktxt or "").strip()))
+            # 1. Línea de SALIDA (Efecto negativo en el banco de origen)
+            objetos_dashboard.append(
+                DashboardConsolidado(
+                    tipo_operacion=op["tipo"],
+                    categoria=op["tipo"],
+                    sub_categoria=op.get("sub_categoria", ""),
+                    cuenta_contable=op["cuenta_salida"],
+                    cuenta_gasto="",
+                    lifnr="",
+                    kunnr="",
+                    monto_base=-abs(float(op["monto_salida"])),
+                    monto_total=-abs(float(op["monto_salida"])),
+                    rwcur=op.get("rwcur_salida", ""),
+                    fecha_contabilizacion=op["fecha"],
+                    documento_primario=op["salida"].partida.belnr,
+                    documento_secundario=f"DESTINO: {op['entrada'].partida.belnr}",
+                    referencia=op["ref"],
+                    referencia1=(op["salida"].partida.bktxt or "").strip(),
+                )
+            )
+
+            # 2. Línea de ENTRADA (Efecto positivo en el banco de destino)
+            objetos_dashboard.append(
+                DashboardConsolidado(
+                    tipo_operacion=op["tipo"],
+                    categoria=op["tipo"],
+                    sub_categoria=op.get("sub_categoria", ""),
+                    cuenta_contable=op["cuenta_entrada"],
+                    cuenta_gasto="",
+                    lifnr="",
+                    kunnr="",
+                    monto_base=abs(float(op["monto_entrada"])),
+                    monto_total=abs(float(op["monto_entrada"])),
+                    rwcur=op.get("rwcur_entrada", ""),
+                    fecha_contabilizacion=op["fecha"],
+                    documento_primario=op["entrada"].partida.belnr,
+                    documento_secundario=f"ORIGEN: {op['salida'].partida.belnr}",
+                    referencia=op["ref"],
+                    referencia1=(op["entrada"].partida.bktxt or "").strip(),
+                )
+            )
 
         for cb in comisiones:
-            objetos_dashboard.append(DashboardConsolidado(tipo_operacion="EGRESOS", categoria="COMISION_BANCARIA", sub_categoria="", cuenta_contable=cb["cuenta_banco"], cuenta_gasto=cb["cuenta_gasto"], lifnr="", kunnr="", monto_base=cb["monto"], monto_total=cb["monto"], rwcur=cb.get("rwcur", ""), fecha_contabilizacion=cb["fecha"], documento_primario=cb["documento_primario"], documento_secundario="", referencia=cb["referencia"], referencia1=cb.get("referencia1", "")))
+            objetos_dashboard.append(
+                DashboardConsolidado(
+                    tipo_operacion="EGRESOS",
+                    categoria="COMISION_BANCARIA",
+                    sub_categoria="",
+                    cuenta_contable=cb["cuenta_banco"],
+                    cuenta_gasto=cb["cuenta_gasto"],
+                    lifnr="",
+                    kunnr="",
+                    monto_base=cb["monto"],
+                    monto_total=cb["monto"],
+                    rwcur=cb.get("rwcur", ""),
+                    fecha_contabilizacion=cb["fecha"],
+                    documento_primario=cb["documento_primario"],
+                    documento_secundario="",
+                    referencia=cb["referencia"],
+                    referencia1=cb.get("referencia1", ""),
+                )
+            )
 
         for res in ingresos_validados:
             # CORRECCIÓN: Usa res["cuenta_banco"] que es como lo retorna la nueva función
-            cat = "INGRESO_TARJETA" if res["cuenta_banco"].endswith("4") else "INGRESO_DEPOSITO"
-            
-            objetos_dashboard.append(DashboardConsolidado(
-                tipo_operacion="INGRESOS", 
-                categoria=cat, 
-                sub_categoria=res.get("sub_categoria", ""),  # <-- Aquí se inyecta "COBRANZA"
-                cuenta_contable=res["cuenta_banco"], 
-                cuenta_gasto="", 
-                lifnr=res.get("lifnr", ""), 
-                kunnr=res.get("kunnr", ""), 
-                monto_base=res["monto"], 
-                monto_total=res["monto"], 
-                rwcur=res.get("rwcur", ""), 
-                fecha_contabilizacion=res["fecha"], 
-                documento_primario=res["documento_primario"], 
-                documento_secundario=res["documento_secundario"], 
-                referencia=res["referencia"], 
-                referencia1=res.get("referencia1", "")
-            ))
-        
+            cat = (
+                "INGRESO_TARJETA"
+                if res["cuenta_banco"].endswith("4")
+                else "INGRESO_DEPOSITO"
+            )
+
+            objetos_dashboard.append(
+                DashboardConsolidado(
+                    tipo_operacion="INGRESOS",
+                    categoria=cat,
+                    sub_categoria=res.get(
+                        "sub_categoria", ""
+                    ),  # <-- Aquí se inyecta "COBRANZA"
+                    cuenta_contable=res["cuenta_banco"],
+                    cuenta_gasto="",
+                    lifnr=res.get("lifnr", ""),
+                    kunnr=res.get("kunnr", ""),
+                    monto_base=res["monto"],
+                    monto_total=res["monto"],
+                    rwcur=res.get("rwcur", ""),
+                    fecha_contabilizacion=res["fecha"],
+                    documento_primario=res["documento_primario"],
+                    documento_secundario=res["documento_secundario"],
+                    referencia=res["referencia"],
+                    referencia1=res.get("referencia1", ""),
+                )
+            )
+
         def _agregar_auditoria(posicion, motivo):
-            objetos_auditoria.append(AsientoAuditoria(bukrs=posicion.partida.bukrs, belnr=posicion.partida.belnr, gjahr=posicion.partida.gjahr, blart=posicion.partida.blart, cuenta_contable=posicion.ractt, monto=abs(float(posicion.wsl)), rwcur=posicion.rwcur or "", fecha=posicion.partida.budat, motivo_descarte=motivo, texto_cabecera=(posicion.partida.bktxt or "").strip()))
+            objetos_auditoria.append(
+                AsientoAuditoria(
+                    bukrs=posicion.partida.bukrs,
+                    belnr=posicion.partida.belnr,
+                    gjahr=posicion.partida.gjahr,
+                    blart=posicion.partida.blart,
+                    cuenta_contable=posicion.ractt,
+                    monto=abs(float(posicion.wsl)),
+                    rwcur=posicion.rwcur or "",
+                    fecha=posicion.partida.budat,
+                    motivo_descarte=motivo,
+                    texto_cabecera=(posicion.partida.bktxt or "").strip(),
+                )
+            )
 
-        for zp in zps_aud: _agregar_auditoria(zp, "ZP abierto. Falló conciliación contra ZR.")
-        for zr in zrs_aud: _agregar_auditoria(zr, "ZR abierto. Falló conciliación de pago contra lote ZP.")
-        for pos, motivo in ingresos_aud: _agregar_auditoria(pos, motivo)
+        for zp in zps_aud:
+            _agregar_auditoria(zp, "ZP abierto. Falló conciliación contra ZR.")
+        for zr in zrs_aud:
+            _agregar_auditoria(
+                zr, "ZR abierto. Falló conciliación de pago contra lote ZP."
+            )
+        for pos, motivo in ingresos_aud:
+            _agregar_auditoria(pos, motivo)
 
-        docs_primarios = [obj.documento_primario for obj in objetos_dashboard if obj.documento_primario]
+        docs_primarios = [
+            obj.documento_primario
+            for obj in objetos_dashboard
+            if obj.documento_primario
+        ]
         if docs_primarios:
-            DashboardConsolidado.objects.filter(documento_primario__in=docs_primarios).delete()
+            DashboardConsolidado.objects.filter(
+                documento_primario__in=docs_primarios
+            ).delete()
             AsientoAuditoria.objects.filter(belnr__in=docs_primarios).delete()
 
-        DashboardConsolidado.objects.filter(fecha_contabilizacion__gte=fecha_inicio, fecha_contabilizacion__lte=fecha_fin).delete()
-        AsientoAuditoria.objects.filter(fecha__gte=fecha_inicio, fecha__lte=fecha_fin).delete()
+        DashboardConsolidado.objects.filter(
+            fecha_contabilizacion__gte=fecha_inicio,
+            fecha_contabilizacion__lte=fecha_fin,
+        ).delete()
+        AsientoAuditoria.objects.filter(
+            fecha__gte=fecha_inicio, fecha__lte=fecha_fin
+        ).delete()
 
-        if objetos_dashboard: DashboardConsolidado.objects.bulk_create(objetos_dashboard, batch_size=2000)
-        if objetos_auditoria: AsientoAuditoria.objects.bulk_create(objetos_auditoria, batch_size=2000)
+        if objetos_dashboard:
+            DashboardConsolidado.objects.bulk_create(objetos_dashboard, batch_size=2000)
+        if objetos_auditoria:
+            AsientoAuditoria.objects.bulk_create(objetos_auditoria, batch_size=2000)
 
         self.log.refresh_from_db(fields=["errores_count"])
         err_antes = self.log.errores_count
 
-        self.log.registrar_fin_paso("paso8", {
-            "dashboard_registros": len(objetos_dashboard),
-            "auditoria_registros": len(objetos_auditoria),
-            "cadena_zr_zp_filas": len(resultados_zr),
-            "operaciones_internas": len(operaciones_internas),
-            "comisiones_detectadas": len(comisiones),
-            "ingresos_validados": len(ingresos_validados),
-        }, estado=_obtener_estado_paso(self.log, err_antes))
+        self.log.registrar_fin_paso(
+            "paso8",
+            {
+                "dashboard_registros": len(objetos_dashboard),
+                "auditoria_registros": len(objetos_auditoria),
+                "cadena_zr_zp_filas": len(resultados_zr),
+                "operaciones_internas": len(operaciones_internas),
+                "comisiones_detectadas": len(comisiones),
+                "ingresos_validados": len(ingresos_validados),
+            },
+            estado=_obtener_estado_paso(self.log, err_antes),
+        )
