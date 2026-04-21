@@ -10,7 +10,7 @@ from django.utils import timezone
 from django.views.decorators.http import require_POST
 
 from core.models import ColumnaDrillDown, DashboardConsolidado
-from sap_sync.models import TasaBCV
+from sap_sync.models import PartidaPosicion, TasaBCV
 from sap_sync.tasks import ejecutar_paso8_manual, ejecutar_sync_sap
 
 
@@ -37,15 +37,18 @@ def dashboard_view(request):
         fecha_contabilizacion__range=[inicio_mes, fin_mes]
     )
 
-    # ⚡ SEPARACIÓN POR CATEGORÍA Y MONEDA
-    matriz_datos = {}
+    # ⚡ NUEVO: ESTRUCTURA AGRUPADA PRIMERO POR MONEDA, LUEGO POR CATEGORÍA
+    matriz_por_moneda = {}
+
     for reg in registros:
         moneda = reg.rwcur or "S/M"
         cat_base = reg.categoria
-        llave = f"{cat_base} ({moneda})"
 
-        if llave not in matriz_datos:
-            matriz_datos[llave] = {
+        if moneda not in matriz_por_moneda:
+            matriz_por_moneda[moneda] = {}
+
+        if cat_base not in matriz_por_moneda[moneda]:
+            matriz_por_moneda[moneda][cat_base] = {
                 "dias": {},
                 "totales_semana": {},
                 "total_mes": 0.0,
@@ -55,10 +58,10 @@ def dashboard_view(request):
 
         fecha_str = reg.fecha_contabilizacion.isoformat()
         monto = float(reg.monto_total)
-        matriz_datos[llave]["dias"][fecha_str] = (
-            matriz_datos[llave]["dias"].get(fecha_str, 0) + monto
+        matriz_por_moneda[moneda][cat_base]["dias"][fecha_str] = (
+            matriz_por_moneda[moneda][cat_base]["dias"].get(fecha_str, 0) + monto
         )
-        matriz_datos[llave]["total_mes"] += monto
+        matriz_por_moneda[moneda][cat_base]["total_mes"] += monto
 
     # Agrupar días en semanas y calcular acumulados
     semanas = []
@@ -79,19 +82,31 @@ def dashboard_view(request):
 
         if cursor.weekday() == 6 or cursor == fin_mes:
             semanas.append(semana_actual)
-            for cat in matriz_datos.keys():
-                suma_sem = sum(
-                    matriz_datos[cat]["dias"].get(d["fecha_str"], 0)
-                    for d in semana_actual["dias"]
-                )
-                matriz_datos[cat]["totales_semana"][str(week_id)] = suma_sem
+
+            # ⚡ El cálculo semanal ahora itera sobre todas las monedas
+            for moneda, cats in matriz_por_moneda.items():
+                for cat, data in cats.items():
+                    suma_sem = sum(
+                        data["dias"].get(d["fecha_str"], 0)
+                        for d in semana_actual["dias"]
+                    )
+                    data["totales_semana"][str(week_id)] = suma_sem
 
             week_id += 1
             semana_actual = {"id": week_id, "dias": []}
 
         cursor += timedelta(days=1)
 
-    categorias = sorted(matriz_datos.keys())
+    # ⚡ ORDENAR PARA ENVIAR A LA PLANTILLA
+    matriz_final = []
+    for moneda in sorted(matriz_por_moneda.keys()):
+        # Ordenamos alfabéticamente las categorías dentro de la moneda
+        categorias_ordenadas = {
+            k: matriz_por_moneda[moneda][k]
+            for k in sorted(matriz_por_moneda[moneda].keys())
+        }
+        matriz_final.append({"moneda": moneda, "categorias": categorias_ordenadas})
+
     meses_lista = [
         (1, "Enero"),
         (2, "Febrero"),
@@ -111,8 +126,7 @@ def dashboard_view(request):
         request,
         "core/dashboard.html",
         {
-            "matriz": matriz_datos,
-            "categorias": categorias,
+            "matriz_final": matriz_final,  # ⚡ Se envía la nueva estructura de Múltiples Tablas
             "semanas": semanas,
             "mes_sel": mes_sel,
             "anio_sel": anio_sel,
@@ -152,7 +166,7 @@ def disparar_sincronizacion(request):
 @login_required
 def detalle_asientos_api(request):
     categoria = request.GET.get("categoria")
-    moneda = request.GET.get("moneda")  # ⚡ Nuevo
+    moneda = request.GET.get("moneda")
     fecha = request.GET.get("fecha")
     page = int(request.GET.get("page", 1))
     search = request.GET.get("search", "").strip()
@@ -168,7 +182,6 @@ def detalle_asientos_api(request):
     ]
     campos_para_query = [c.campo_bd for c in config_columnas]
 
-    # ⚡ Filtramos por Categoría Y Moneda
     qs = DashboardConsolidado.objects.filter(
         categoria=categoria, rwcur=moneda, fecha_contabilizacion=fecha
     )
@@ -216,6 +229,43 @@ def detalle_asientos_api(request):
             "totales_moneda": totales_moneda,
         }
     )
+
+
+@login_required
+def detalle_documento_api(request):
+    belnr = request.GET.get("belnr")
+    augbl = request.GET.get("augbl")
+
+    if augbl:
+        posiciones = (
+            PartidaPosicion.objects.filter(augbl=augbl)
+            .select_related("partida")
+            .order_by("partida__belnr", "docln")
+        )
+    else:
+        posiciones = (
+            PartidaPosicion.objects.filter(partida__belnr=belnr)
+            .select_related("partida")
+            .order_by("docln")
+        )
+
+    datos = []
+    for pos in posiciones:
+        datos.append(
+            {
+                "belnr": pos.partida.belnr,
+                "pos": pos.docln,
+                "cuenta": pos.ractt,
+                "monto": float(pos.wsl),
+                "moneda": pos.rwcur or "",
+                "dh": pos.drcrk or "",
+                "referencia": pos.zuonr or "",
+                "compensacion": pos.augbl or "",
+                "socio": pos.lifnr or pos.kunnr or "",
+            }
+        )
+
+    return JsonResponse({"datos": datos})
 
 
 @require_POST

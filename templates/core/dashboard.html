@@ -4,15 +4,15 @@
 
 {% block content %}
 <style>
-    /* FIJACIÓN DE COLUMNA DE CATEGORÍA Y CABECERAS */
+    /* FIJACIÓN DE COLUMNA DE CATEGORÍA Y CABECERAS PARA MÚLTIPLES TABLAS */
     .table-responsive {
         max-height: 78vh;
         overflow: auto;
         border: 1px solid var(--border-color);
     }
     
-    #main-table th.col-categoria,
-    #main-table td.col-categoria {
+    .main-table-moneda th.col-categoria,
+    .main-table-moneda td.col-categoria {
         position: sticky !important;
         left: 0 !important;
         z-index: 10 !important;
@@ -21,7 +21,7 @@
         min-width: 240px;
     }
 
-    #main-table th.col-categoria {
+    .main-table-moneda th.col-categoria {
         z-index: 11 !important;
         background-color: #3c4295 !important;
         color: white !important;
@@ -59,10 +59,6 @@
 </style>
 
 <div class="container-fluid mt-3">
-    <div class="d-flex justify-content-between align-items-center mb-3 pb-2 border-bottom" style="border-color: #6eb43f !important;">
-        <h2 style="color: #3c4295; font-weight: bold;">{% translate "Disponibilidad Bancaria" %}</h2>
-    </div>
-
     <div class="card p-3 shadow-sm border-0 mb-3 bg-light">
         <div class="row align-items-end">
             <div class="col-md-4">
@@ -109,48 +105,54 @@
         </div>
     </div>
 
-    <div class="table-responsive shadow-sm rounded">
-        <table id="main-table" class="table table-bordered align-middle mb-0" style="font-size: 0.78rem;">
-            <thead class="text-white text-center" style="background-color: #3c4295;">
-                <tr>
-                    <th rowspan="3" class="align-middle text-start col-categoria">{% translate "Categoría" %}</th>
-                    {% for semana in semanas %}
-                        {% for dia in semana.dias %}
-                            <th class="py-1 week-{{ semana.id }}-col">{{ dia.fecha_obj|date:"D"|upper }}</th>
-                        {% endfor %}
-                        <th rowspan="2" class="align-middle text-dark" style="background-color: #ffd700; min-width: 120px;">
-                            {% translate "Semana" %} {{ semana.id }}
-                            <button class="btn-toggle-week" onclick="toggleSemana('{{ semana.id }}')">
-                                <i class="fas fa-compress-arrows-alt" id="icon-week-{{ semana.id }}"></i>
-                            </button>
-                        </th>
-                    {% endfor %}
-                    <th rowspan="2" class="align-middle bg-success" style="min-width: 130px;">{% translate "TOTAL MENSUAL" %}</th>
-                </tr>
-                <tr>
-                    {% for semana in semanas %}
-                        {% for dia in semana.dias %}
-                            <th class="py-1 border-top-0 week-{{ semana.id }}-col">{{ dia.numero_dia }}</th>
-                        {% endfor %}
-                    {% endfor %}
-                </tr>
-                <tr style="background-color: #f0f1f8; color: #3c4295;">
-                    {% for semana in semanas %}
-                        {% for dia in semana.dias %}
-                            <th class="py-0 small week-{{ semana.id }}-col" style="font-size: 0.62rem; font-weight: normal;">
-                                TC: {{ dia.tasa_bcv|formato_tasa }}
+    {% for bloque in matriz_final %}
+        <div class="d-flex justify-content-between align-items-center mt-4 mb-2">
+            <h4 style="color: #1b5e20; font-weight: bold; border-bottom: 2px solid #6eb43f; padding-bottom: 5px;">
+                <i class="fas fa-coins me-2"></i> {% translate "Disponibilidad en" %} {{ bloque.moneda }}
+            </h4>
+        </div>
+
+        <div class="table-responsive shadow-sm rounded mb-4">
+            <table class="table table-bordered align-middle mb-0 main-table-moneda" style="font-size: 0.78rem;">
+                <thead class="text-white text-center" style="background-color: #3c4295;">
+                    <tr>
+                        <th rowspan="3" class="align-middle text-start col-categoria">{% translate "Categoría" %}</th>
+                        {% for semana in semanas %}
+                            {% for dia in semana.dias %}
+                                <th class="py-1 week-{{ semana.id }}-col">{{ dia.fecha_obj|date:"D"|upper }}</th>
+                            {% endfor %}
+                            <th rowspan="2" class="align-middle text-dark" style="background-color: #ffd700; min-width: 120px;">
+                                {% translate "Semana" %} {{ semana.id }}
+                                <button class="btn-toggle-week" onclick="toggleSemana('{{ semana.id }}')">
+                                    <i class="fas fa-compress-arrows-alt" id="icon-week-{{ semana.id }}"></i>
+                                </button>
                             </th>
                         {% endfor %}
-                        <th class="col-semanal small">Acum.</th>
-                    {% endfor %}
-                    <th class="bg-success">Cierre</th>
-                </tr>
-            </thead>
-            <tbody>
-                {% for categoria in categorias %}
-                <tr>
-                    <td class="fw-bold col-categoria">{{ categoria }}</td>
-                    {% with cat_data=matriz|get_val:categoria %}
+                        <th rowspan="2" class="align-middle bg-success" style="min-width: 130px;">{% translate "TOTAL MENSUAL" %}</th>
+                    </tr>
+                    <tr>
+                        {% for semana in semanas %}
+                            {% for dia in semana.dias %}
+                                <th class="py-1 border-top-0 week-{{ semana.id }}-col">{{ dia.numero_dia }}</th>
+                            {% endfor %}
+                        {% endfor %}
+                    </tr>
+                    <tr style="background-color: #f0f1f8; color: #3c4295;">
+                        {% for semana in semanas %}
+                            {% for dia in semana.dias %}
+                                <th class="py-0 small week-{{ semana.id }}-col" style="font-size: 0.62rem; font-weight: normal;">
+                                    TC: {{ dia.tasa_bcv|formato_tasa }}
+                                </th>
+                            {% endfor %}
+                            <th class="col-semanal small">Acum.</th>
+                        {% endfor %}
+                        <th class="bg-success">Cierre</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for categoria, cat_data in bloque.categorias.items %}
+                    <tr>
+                        <td class="fw-bold col-categoria">{{ categoria }}</td>
                         {% for semana in semanas %}
                             {% for dia in semana.dias %}
                                 <td class="text-end week-{{ semana.id }}-col">
@@ -172,12 +174,17 @@
                         <td class="text-end fw-bold text-success col-mensual">
                             {{ cat_data.total_mes|formato_ve }}
                         </td>
-                    {% endwith %}
-                </tr>
-                {% endfor %}
-            </tbody>
-        </table>
-    </div>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    {% empty %}
+        <div class="alert alert-warning mt-4 text-center fw-bold shadow-sm">
+            <i class="fas fa-exclamation-triangle fa-2x mb-2 d-block text-warning"></i>
+            {% translate "No hay datos de disponibilidad para el periodo seleccionado." %}
+        </div>
+    {% endfor %}
 </div>
 
 <div class="toast-container position-fixed bottom-0 end-0 p-3" style="z-index: 1060;">
@@ -231,7 +238,6 @@
            <span class="text-dark fw-bold me-3">TOTAL FILTRADO:</span>
            <div id="dd-totales-badges"></div>
       </div>
-
     </div>
   </div>
 </div>
@@ -249,7 +255,8 @@
       <div class="modal-body table-responsive p-0 mb-0" style="height: 65vh; overflow-y: auto;">
         <table class="table table-sm table-striped table-hover mb-0" style="font-size: 0.85rem;">
             <thead class="table-dark" style="position: sticky; top: 0; z-index: 10;">
-                <tr id="doc-sap-head"></tr> </thead>
+                <tr id="doc-sap-head"></tr> 
+            </thead>
             <tbody id="doc-sap-body"></tbody>
         </table>
       </div>
@@ -258,7 +265,6 @@
            <span class="text-dark fw-bold">BALANCE NETO (D/H):</span>
            <div id="doc-totales-badges"></div>
       </div>
-
     </div>
   </div>
 </div>
@@ -317,7 +323,6 @@
     }
 
     function iniciarPaso8() {
-        // ⚡ NUEVO: Usa el periodo del filtro de visualización
         const mes = document.querySelector('select[name="mes"]').value;
         const anio = document.querySelector('select[name="anio"]').value;
         
@@ -325,7 +330,6 @@
             return mostrarToast("{% translate 'Por favor seleccione un periodo válido en el filtro superior' %}", 'warning');
         }
         
-        // Calcular fechas de inicio y fin (Ej: "2022-02-01" al "2022-02-28")
         const start = `${anio}-${mes.padStart(2, '0')}-01`;
         const lastDay = new Date(anio, mes, 0).getDate();
         const end = `${anio}-${mes.padStart(2, '0')}-${lastDay.toString().padStart(2, '0')}`;
@@ -346,7 +350,7 @@
     }
 
     // ==========================================
-    // LÓGICA DE MODAL 1: DRILL DOWN (PAGINADO Y ORDENABLE)
+    // LÓGICA DE MODAL 1: DRILL DOWN
     // ==========================================
     let currentCategoria = '';
     let currentMoneda = '';
@@ -401,7 +405,6 @@
         
         tbody.innerHTML = '<tr><td colspan="10" class="text-center py-4"><i class="fas fa-spinner fa-spin"></i> {% translate "Cargando datos..." %}</td></tr>';
         
-        // ⚡ Inyectamos moneda como nuevo parámetro
         const url = `{% url 'detalle_asientos_api' %}?categoria=${encodeURIComponent(currentCategoria)}&moneda=${encodeURIComponent(currentMoneda)}&fecha=${currentFecha}&page=${currentPage}&search=${encodeURIComponent(search)}&sort=${ddSortCampo}&order=${ddSortOrder}`;
         
         fetch(url)
@@ -476,7 +479,7 @@
     }
 
     // ==========================================
-    // LÓGICA DE MODAL 2: EXPLORADOR SAP (ORDENABLE EN CLIENTE)
+    // LÓGICA DE MODAL 2: EXPLORADOR SAP 
     // ==========================================
     let sapDataOriginal = [];
     let sapSortCampo = '';

@@ -1055,6 +1055,13 @@ class SAPSyncOrchestrator:
             cuentas_conf.filter(tipo="COMISION").values_list("cuenta", flat=True)
         )
 
+        # ⚡ CARGAMOS EL MAPEO DE GASTOS DESDE LA BD
+        from core.models import ClasificacionGasto
+
+        mapeo_gastos = dict(
+            ClasificacionGasto.objects.values_list("cuenta_gasto", "clasificacion")
+        )
+
         hkonts_saldos = set(
             SaldoBancario.objects.values_list("hkont", flat=True).distinct()
         )
@@ -1291,11 +1298,16 @@ class SAPSyncOrchestrator:
                 else res["documento_pago"]
             )
 
+            # ⚡ APLICAMOS EL MAPEO DE GASTOS DINÁMICO
+            cat_gasto = mapeo_gastos.get(
+                res["cuenta_gasto"], "OTROS GASTOS (Falta Mapear)"
+            )
+
             objetos_dashboard.append(
                 DashboardConsolidado(
                     tipo_operacion="EGRESOS",
-                    categoria="PROPUESTA_PAGO",
-                    sub_categoria="",
+                    categoria=cat_gasto,
+                    sub_categoria="PROPUESTA_PAGO",
                     cuenta_contable=res["cuenta_banco"],
                     cuenta_gasto=res["cuenta_gasto"],
                     lifnr=res["proveedor"],
@@ -1314,6 +1326,7 @@ class SAPSyncOrchestrator:
                     referencia1=res.get("referencia1", ""),
                 )
             )
+
         for op in operaciones_internas:
             objetos_dashboard.append(
                 DashboardConsolidado(
@@ -1356,11 +1369,12 @@ class SAPSyncOrchestrator:
             )
 
         for cb in comisiones:
+            cat_comision = mapeo_gastos.get(cb["cuenta_gasto"], "COMISION_BANCARIA")
             objetos_dashboard.append(
                 DashboardConsolidado(
                     tipo_operacion="EGRESOS",
-                    categoria="COMISION_BANCARIA",
-                    sub_categoria="",
+                    categoria=cat_comision,
+                    sub_categoria="COMISION_BANCARIA",
                     cuenta_contable=cb["cuenta_banco"],
                     cuenta_gasto=cb["cuenta_gasto"],
                     lifnr="",
