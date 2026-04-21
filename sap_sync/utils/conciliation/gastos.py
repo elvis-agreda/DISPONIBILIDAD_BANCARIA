@@ -40,18 +40,25 @@ def conciliar_cadena_zr_zp_facturas(
 
     # ⚡ NUEVA LÓGICA: PRE-EMPAREJAMIENTO INTELIGENTE (1 a 1 y N a 1)
     mapa_zr_a_zps = defaultdict(list)
-    zrs_por_augbl = defaultdict(list)
+    zrs_agrupados = defaultdict(list)
 
+    # 1. Agrupamos por el AUGBL del ZR (o por su propio belnr si no tiene)
     for zr in balde_solo_zrs:
-        if zr.augbl:
-            zrs_por_augbl[zr.augbl].append(zr)
-        else:
-            mapa_zr_a_zps[zr.id] = []
+        clave_grupo = zr.augbl if zr.augbl else zr.partida.belnr
+        zrs_agrupados[clave_grupo].append(zr)
 
-    for augbl, zrs_grupo in zrs_por_augbl.items():
-        zps_grupo = list(mapa_zps_por_augbl.get(augbl, []))
-        if augbl in mapa_zps_por_belnr and mapa_zps_por_belnr[augbl] not in zps_grupo:
-            zps_grupo.append(mapa_zps_por_belnr[augbl])
+    for clave, zrs_grupo in zrs_agrupados.items():
+        # 2. Rescatamos todos los ZPs que compartan ese mismo AUGBL
+        zps_grupo = list(mapa_zps_por_augbl.get(clave, []))
+
+        if clave in mapa_zps_por_belnr and mapa_zps_por_belnr[clave] not in zps_grupo:
+            zps_grupo.append(mapa_zps_por_belnr[clave])
+
+        # 3. Y rescatamos ZPs cuyo AUGBL apunte directamente al BELNR del ZR
+        for zr in zrs_grupo:
+            for zp_huerfano in mapa_zps_por_augbl.get(zr.partida.belnr, []):
+                if zp_huerfano not in zps_grupo:
+                    zps_grupo.append(zp_huerfano)
 
         if not zps_grupo:
             for zr in zrs_grupo:
@@ -148,12 +155,25 @@ def conciliar_cadena_zr_zp_facturas(
             facturas_ids = {f for f in facturas_ids if f != zp.partida.belnr}
 
             if not facturas_ids:
+                from sap_sync.models import PartidaPosicion
+
+                linea_prov = (
+                    PartidaPosicion.objects.filter(
+                        partida=zp.partida, koart__in=["K", "D"]
+                    )
+                    .values_list("ractt", flat=True)
+                    .first()
+                )
+
+                cuenta_gasto = linea_prov if linea_prov else "SIN_DETALLE_GASTO"
+                # --------------------
+
                 resultados_crudos.append(
                     {
                         "zp": zp,
                         "factura": "",
                         "prov": "",
-                        "cuenta": "SIN_DETALLE_GASTO",
+                        "cuenta": cuenta_gasto,
                         "monto": monto_zr_para_zp,
                     }
                 )
@@ -215,7 +235,7 @@ def conciliar_cadena_zr_zp_facturas(
                             "CUENTA_CONTABLE_ND"  # Valor por defecto extremo
                         )
 
-                        # ⚡ Buscar la línea original del acreedor/proveedor para heredar su cuenta real
+                        # Buscar la línea original del acreedor/proveedor para heredar su cuenta real
                         for p in facturas_agrupadas[f_id]:
                             if getattr(p, "koart", "") in ("K", "D") and (
                                 p.lifnr == prov or p.kunnr == prov

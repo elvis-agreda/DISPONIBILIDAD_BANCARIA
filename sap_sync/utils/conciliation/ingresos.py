@@ -2,7 +2,7 @@
 from collections import defaultdict
 
 
-def procesar_ingresos_bancarios(posiciones, cuentas_ingreso):
+def procesar_ingresos_bancarios(posiciones, cuentas_ingreso, documentos_con_banco):
     validados = []
     auditoria = []
 
@@ -15,7 +15,8 @@ def procesar_ingresos_bancarios(posiciones, cuentas_ingreso):
         if pos.ractt not in cuentas_ingreso:
             continue
 
-        if pos.partida.blart in ("ZR", "ZH"):
+        # Integrado: "XX" como documento de banco junto a ZR y ZH
+        if pos.partida.blart in ("ZR", "ZH", "XX"):
             zrs_banco.append(pos)
         else:
             pagos_originales.append(pos)
@@ -29,23 +30,27 @@ def procesar_ingresos_bancarios(posiciones, cuentas_ingreso):
         if p.augbl:
             mapa_pagos_por_augbl[p.augbl].append(p)
 
-    # ⚡ PRE-EMPAREJAMIENTO INTELIGENTE (1 a 1, N a 1 y 1 a N)
+    # ⚡ PRE-EMPAREJAMIENTO INTELIGENTE Y AGRUPACIÓN N a N
     mapa_zr_a_pagos = defaultdict(list)
-    zrs_por_augbl = defaultdict(list)
+    zrs_agrupados = defaultdict(list)
 
     for zr in zrs_banco:
-        if zr.augbl:
-            zrs_por_augbl[zr.augbl].append(zr)
-        else:
-            mapa_zr_a_pagos[zr.id] = []
+        clave_grupo = zr.augbl if zr.augbl else zr.partida.belnr
+        zrs_agrupados[clave_grupo].append(zr)
 
-    for augbl, zrs_grupo in zrs_por_augbl.items():
-        pagos_grupo = list(mapa_pagos_por_augbl.get(augbl, []))
+    for clave, zrs_grupo in zrs_agrupados.items():
+        pagos_grupo = list(mapa_pagos_por_augbl.get(clave, []))
+
         if (
-            augbl in mapa_pagos_por_belnr
-            and mapa_pagos_por_belnr[augbl] not in pagos_grupo
+            clave in mapa_pagos_por_belnr
+            and mapa_pagos_por_belnr[clave] not in pagos_grupo
         ):
-            pagos_grupo.append(mapa_pagos_por_belnr[augbl])
+            pagos_grupo.append(mapa_pagos_por_belnr[clave])
+
+        for zr in zrs_grupo:
+            for pago_huerfano in mapa_pagos_por_augbl.get(zr.partida.belnr, []):
+                if pago_huerfano not in pagos_grupo:
+                    pagos_grupo.append(pago_huerfano)
 
         if not pagos_grupo:
             for zr in zrs_grupo:
@@ -118,7 +123,7 @@ def procesar_ingresos_bancarios(posiciones, cuentas_ingreso):
 
     procesados_ids = set()
 
-    # 3. Conciliación centrada en el Extracto (ZR)
+    # 3. Conciliación centrada en el Extracto
     for zr in zrs_banco:
         relacionados = mapa_zr_a_pagos.get(zr.id, [])
 
@@ -134,7 +139,6 @@ def procesar_ingresos_bancarios(posiciones, cuentas_ingreso):
             if not socio_id:
                 socio_id = p.kunnr or p.lifnr or ""
 
-        # ⚡ Categorización Dinámica
         es_tarjeta = str(zr.ractt).endswith("4")
 
         if es_tarjeta:
@@ -144,11 +148,8 @@ def procesar_ingresos_bancarios(posiciones, cuentas_ingreso):
         else:
             sub_cat = "OTROS INGRESOS"
 
-        # ⚡ NUEVO: ZR huérfano (en tránsito) de tarjetas va en negativo
-        if es_tarjeta and not relacionados:
-            monto_final = -abs(float(zr.wsl))
-        else:
-            monto_final = abs(float(zr.wsl))
+        # ⚡ SIEMPRE ABSOLUTO: Ya no hay positivos/negativos falsos aquí
+        monto_final = abs(float(zr.wsl))
 
         docs_sec = ", ".join(set([p.partida.belnr for p in relacionados]))
 
@@ -173,40 +174,52 @@ def procesar_ingresos_bancarios(posiciones, cuentas_ingreso):
             }
         )
 
-    # 4. Pagos "En Tránsito" (Sin ZR todavía)
+    # 4. Pagos "En Tránsito" (Agrupados y Filtrados)
+    pagos_en_transito_agrupados = defaultdict(list)
+
     for p in pagos_originales:
         if p.id not in procesados_ids:
-            # ⚡ REGLA ESTRICTA: Solo DZ y DA pueden quedar en tránsito del lado de SAP
             if p.partida.blart not in ["DZ", "DA"]:
                 continue
 
             es_tarjeta = str(p.ractt).endswith("4")
 
-            # Si es tarjeta y YA ESTÁ COMPENSADA en SAP, ignorarla
             if es_tarjeta and p.augbl:
                 continue
 
-            if es_tarjeta:
-                sub_cat = "TARJETAS"
-            else:
-                # Como ya filtramos por DZ y DA, si no es tarjeta obligatoriamente es COBRANZA
-                sub_cat = "COBRANZA"
+            pagos_en_transito_agrupados[p.partida.belnr].append(p)
 
-            validados.append(
-                {
-                    "tipo_operacion": "INGRESOS",
-                    "sub_categoria": sub_cat,
-                    "cuenta_banco": p.ractt,
-                    "monto": float(p.wsl),
-                    "fecha": p.partida.budat,
-                    "documento_primario": p.partida.belnr,
-                    "documento_secundario": "EN TRANSITO",
-                    "referencia": p.zuonr or "",
-                    "referencia1": (p.partida.bktxt or "").strip(),
-                    "rwcur": p.rwcur or "",
-                    "lifnr": p.lifnr or "",
-                    "kunnr": p.kunnr or "",
-                }
-            )
+    for belnr, posiciones_doc in pagos_en_transito_agrupados.items():
+        # ⚡ REGLA DE ORO: Si el documento no tocó el banco, se descarta por completo
+        if belnr not in documentos_con_banco:
+            continue
+
+        # Sumamos los montos de todas las líneas de este documento
+        monto_neto = sum(float(p.wsl) for p in posiciones_doc)
+
+        # Si la suma da cero, desaparece del Dashboard
+        if abs(monto_neto) < 0.01:
+            continue
+
+        p_ref = posiciones_doc[0]
+        es_tarjeta = str(p_ref.ractt).endswith("4")
+        sub_cat = "TARJETAS" if es_tarjeta else "COBRANZA"
+
+        validados.append(
+            {
+                "tipo_operacion": "INGRESOS",
+                "sub_categoria": sub_cat,
+                "cuenta_banco": p_ref.ractt,
+                "monto": abs(float(monto_neto)),
+                "fecha": p_ref.partida.budat,
+                "documento_primario": p_ref.partida.belnr,
+                "documento_secundario": "EN TRANSITO",
+                "referencia": p_ref.zuonr or "",
+                "referencia1": (p_ref.partida.bktxt or "").strip(),
+                "rwcur": p_ref.rwcur or "",
+                "lifnr": p_ref.lifnr or "",
+                "kunnr": p_ref.kunnr or "",
+            }
+        )
 
     return validados, auditoria

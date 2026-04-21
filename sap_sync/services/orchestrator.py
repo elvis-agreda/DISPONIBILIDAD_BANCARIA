@@ -1044,7 +1044,6 @@ class SAPSyncOrchestrator:
             "paso8", "Conciliación y Cálculo de Disponibilidad"
         )
 
-        # Cargar configuración desde la BD (Añadido en Fase 1)
         cuentas_conf = CuentaConfiguracion.objects.filter(activa=True)
         set_impuestos = set(
             cuentas_conf.filter(tipo="IMPUESTO").values_list("cuenta", flat=True)
@@ -1056,7 +1055,6 @@ class SAPSyncOrchestrator:
             cuentas_conf.filter(tipo="COMISION").values_list("cuenta", flat=True)
         )
 
-        # ⚡ NUEVA LÓGICA DE DESCUBRIMIENTO DINÁMICO DE FAMILIAS BANCARIAS
         hkonts_saldos = set(
             SaldoBancario.objects.values_list("hkont", flat=True).distinct()
         )
@@ -1093,7 +1091,6 @@ class SAPSyncOrchestrator:
             subcuentas = [t for t in terminaciones if t in "1234567"]
 
             if not subcuentas:
-                # CUENTA STANDALONE
                 cuentas_egresos.add(cuenta_cero)
                 cuentas_ingresos.add(cuenta_cero)
             else:
@@ -1132,13 +1129,21 @@ class SAPSyncOrchestrator:
             )
             .values_list("belnr", flat=True)
         )
+
+        # ⚡ CORRECCIÓN: Extraemos los AUGBL de todos los pagos (ZPs)
+        augbls_de_zps = set(
+            PartidaPosicion.objects.filter(partida__belnr__in=zps_belnrs)
+            .exclude(augbl="")
+            .exclude(augbl__isnull=True)
+            .values_list("augbl", flat=True)
+        )
+
+        # ⚡ CORRECCIÓN: Buscamos los documentos de banco que compartan ese AUGBL
         zrs_zh_relacionados = set(
             PartidaPosicion.objects.filter(
-                partida__belnr__in=zps_belnrs, partida__blart__in=["ZR", "ZH"]
-            )
-            .exclude(augbl="")
-            .exclude(augbl__in=zps_belnrs)
-            .values_list("augbl", flat=True)
+                Q(augbl__in=augbls_de_zps) | Q(partida__belnr__in=augbls_de_zps),
+                partida__blart__in=["ZR", "ZH", "XX"],
+            ).values_list("partida__belnr", flat=True)
         )
 
         facturas_pagadas_por_zp = set(
@@ -1180,11 +1185,16 @@ class SAPSyncOrchestrator:
         todas_posiciones_brutas = list(partidas_db)
         mapa_banco_real = {}
         todas_posiciones = []
+        documentos_con_banco = set()
 
         for pos in todas_posiciones_brutas:
-            # Seguimos alimentando el mapa para las comisiones
             if pos.ractt in cuentas_reales:
                 mapa_banco_real[pos.partida.belnr] = pos.ractt
+
+            # ⚡ REGLA DE ORO: Registramos qué documentos tocaron el banco
+            if pos.ractt in cuentas_todas or pos.ractt in cuentas_reales:
+                documentos_con_banco.add(pos.partida.belnr)
+
             todas_posiciones.append(pos)
 
         operaciones_internas, todas_posiciones = procesar_transferencias_y_divisas(
@@ -1212,7 +1222,8 @@ class SAPSyncOrchestrator:
                     mapa_factura_zp[belnr_doc] = belnr_doc
 
             elif belnr_doc in zrs_zh_relacionados or (
-                pos.partida.blart in ("ZR", "ZH") and cuenta_str in cuentas_egresos
+                pos.partida.blart in ("ZR", "ZH", "XX")
+                and cuenta_str in cuentas_egresos
             ):
                 if cuenta_str in cuentas_todas:
                     balde_solo_zrs.append(pos)
@@ -1248,39 +1259,32 @@ class SAPSyncOrchestrator:
             cuentas_dif_cambio=set_dif_cambio,
         )
 
-        # --- ⚡ CORRECCIÓN: HERENCIA DE SOCIOS USANDO 'partidas_restantes' ---
         self.log.actualizar_progreso_paso(
             "paso8", "Identificando clientes y proveedores en documentos de ingreso..."
         )
 
-        # Obtenemos todos los números de documento involucrados en ingresos
         documentos_ingreso = set(pos.partida.belnr for pos in partidas_restantes)
 
-        # Buscamos en la base de datos las líneas de estos documentos que SI tengan socio (Clase D o K)
         lineas_socios = PartidaPosicion.objects.filter(
             partida__belnr__in=documentos_ingreso, koart__in=["D", "K"]
         ).values("partida__belnr", "lifnr", "kunnr")
 
-        # Creamos un mapa rápido: belnr -> {'lifnr': ..., 'kunnr': ...}
         mapa_socios = {l["partida__belnr"]: l for l in lineas_socios}
 
-        # Asignamos el socio a nuestras posiciones de disponibilidad en memoria
         for pos in partidas_restantes:
             socio = mapa_socios.get(pos.partida.belnr)
             if socio:
                 pos.lifnr = socio.get("lifnr") or ""
                 pos.kunnr = socio.get("kunnr") or ""
-        # ---------------------------------------------------------------
 
-        # Ahora usamos 'partidas_restantes'
+        # ⚡ SE PASA EL NUEVO FILTRO PARA LA AUDITORIA
         ingresos_validados, ingresos_aud = procesar_ingresos_bancarios(
-            partidas_restantes, cuentas_ingresos
+            partidas_restantes, cuentas_ingresos, documentos_con_banco
         )
 
         objetos_dashboard, objetos_auditoria = [], []
 
         for res in resultados_zr:
-            # CORRECCIÓN: Usamos las llaves actualizadas 'documento_banco' y 'documento_pago'
             doc_primario = (
                 res["documento_banco"]
                 if res["documento_banco"] != "EN_TRANSITO"
@@ -1311,7 +1315,6 @@ class SAPSyncOrchestrator:
                 )
             )
         for op in operaciones_internas:
-            # 1. Línea de SALIDA (Efecto negativo en el banco de origen)
             objetos_dashboard.append(
                 DashboardConsolidado(
                     tipo_operacion=op["tipo"],
@@ -1332,7 +1335,6 @@ class SAPSyncOrchestrator:
                 )
             )
 
-            # 2. Línea de ENTRADA (Efecto positivo en el banco de destino)
             objetos_dashboard.append(
                 DashboardConsolidado(
                     tipo_operacion=op["tipo"],
@@ -1375,7 +1377,6 @@ class SAPSyncOrchestrator:
             )
 
         for res in ingresos_validados:
-            # CORRECCIÓN: Usa res["cuenta_banco"] que es como lo retorna la nueva función
             cat = (
                 "INGRESO_TARJETA"
                 if res["cuenta_banco"].endswith("4")
@@ -1386,9 +1387,7 @@ class SAPSyncOrchestrator:
                 DashboardConsolidado(
                     tipo_operacion="INGRESOS",
                     categoria=cat,
-                    sub_categoria=res.get(
-                        "sub_categoria", ""
-                    ),  # <-- Aquí se inyecta "COBRANZA"
+                    sub_categoria=res.get("sub_categoria", ""),
                     cuenta_contable=res["cuenta_banco"],
                     cuenta_gasto="",
                     lifnr=res.get("lifnr", ""),

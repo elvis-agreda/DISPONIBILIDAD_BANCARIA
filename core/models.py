@@ -4,10 +4,6 @@ from django.db import models
 
 
 class SaldoBancario(models.Model):
-    """
-    Almacena los saldos iniciales y movimientos por periodo extraídos de SAP (ZFI_SALDO_BANCARIO).
-    """
-
     bukrs = models.CharField("Sociedad", max_length=4, db_index=True)
     ryear = models.CharField("Ejercicio", max_length=4, db_index=True)
     hkont = models.CharField("Cuenta Mayor", max_length=10, db_index=True)
@@ -71,27 +67,14 @@ class SaldoBancario(models.Model):
     class Meta:
         verbose_name = "Saldo Bancario"
         verbose_name_plural = "Saldos Bancarios"
-        unique_together = (
-            "bukrs",
-            "ryear",
-            "hkont",
-            "waers",
-            "drcrk",
-        )  # Evita duplicados exactos
+        unique_together = ("bukrs", "ryear", "hkont", "waers", "drcrk")
 
     def __str__(self):
         return f"{self.bukrs} - {self.hkont} ({self.ryear})"
 
 
 class DashboardConsolidado(models.Model):
-    """
-    El modelo principal para la Disponibilidad Bancaria.
-    Contiene las operaciones ya conciliadas y limpias.
-    """
-
-    tipo_operacion = models.CharField(
-        "Tipo Operación", max_length=50, db_index=True
-    )  # EJ: EGRESO, INGRESO, TRANSFERENCIA
+    tipo_operacion = models.CharField("Tipo Operación", max_length=50, db_index=True)
     categoria = models.CharField("Categoría", max_length=100, db_index=True)
     sub_categoria = models.CharField(
         "Sub Categoría", max_length=50, blank=True, null=True
@@ -113,15 +96,11 @@ class DashboardConsolidado(models.Model):
     documento_primario = models.CharField(
         "Doc. Primario (BELNR)", max_length=20, db_index=True
     )
-    documento_secundario = models.TextField(
-        "Doc. Secundario", blank=True, null=True
-    )
+    documento_secundario = models.TextField("Doc. Secundario", blank=True, null=True)
     referencia = models.CharField(
         "Referencia (ZUONR)", max_length=50, blank=True, null=True
     )
-    referencia1 = models.TextField(
-        "Referencia 1 (BKTXT)", blank=True, null=True
-    )
+    referencia1 = models.TextField("Referencia 1 (BKTXT)", blank=True, null=True)
 
     creado_en = models.DateTimeField(auto_now_add=True)
 
@@ -135,10 +114,6 @@ class DashboardConsolidado(models.Model):
 
 
 class AsientoAuditoria(models.Model):
-    """
-    Registra operaciones que fallaron la conciliación lógica para revisión manual.
-    """
-
     bukrs = models.CharField("Sociedad", max_length=4)
     belnr = models.CharField("Documento", max_length=20, db_index=True)
     gjahr = models.CharField("Ejercicio", max_length=4)
@@ -163,24 +138,44 @@ class AsientoAuditoria(models.Model):
     def __str__(self):
         return f"AUDIT: {self.belnr} - {self.motivo_descarte}"
 
+
 class ColumnaDrillDown(models.Model):
     TIPO_CHOICES = [
-        ('TEXTO', 'Texto / General'),
-        ('MONTO', 'Monto (2 decimales)'),
-        ('TASA', 'Tasa (Todos los decimales)'),
-        ('FECHA', 'Fecha'),
+        ("TEXTO", "Texto / General"),
+        ("MONTO", "Monto (2 decimales)"),
+        ("TASA", "Tasa (Todos los decimales)"),
+        ("FECHA", "Fecha"),
     ]
-    
+
     campo_bd = models.CharField("Campo en Base de Datos", max_length=50)
     etiqueta = models.CharField("Etiqueta en Pantalla", max_length=50)
-    tipo_dato = models.CharField("Tipo de Dato", max_length=10, choices=TIPO_CHOICES, default='TEXTO') # <-- NUEVO
+    tipo_dato = models.CharField(
+        "Tipo de Dato", max_length=10, choices=TIPO_CHOICES, default="TEXTO"
+    )
     orden = models.IntegerField("Orden", default=0)
     activo = models.BooleanField("Activa", default=True)
 
     class Meta:
         verbose_name = "Columna de Drill-Down"
         verbose_name_plural = "Configuración Drill-Down"
-        ordering = ['orden']
+        ordering = ["orden"]
 
     def __str__(self):
         return f"{self.etiqueta} ({self.campo_bd})"
+
+
+# ⚡ NUEVO MODELO DE MAPEOS DE GASTOS
+class ClasificacionGasto(models.Model):
+    cuenta_gasto = models.CharField(
+        "Cuenta de Gasto (Ej. 511010114)", max_length=20, unique=True
+    )
+    clasificacion = models.CharField(
+        "Nombre en Dashboard (Ej. Nómina Empleados)", max_length=100
+    )
+
+    class Meta:
+        verbose_name = "Mapeo de Gasto"
+        verbose_name_plural = "Mapeos de Gastos"
+
+    def __str__(self):
+        return f"{self.cuenta_gasto} - {self.clasificacion}"
