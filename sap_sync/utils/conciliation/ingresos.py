@@ -15,7 +15,7 @@ def procesar_ingresos_bancarios(posiciones, cuentas_ingreso):
         if pos.ractt not in cuentas_ingreso:
             continue
 
-        if pos.partida.blart == "ZR":
+        if pos.partida.blart in ("ZR", "ZH"):
             zrs_banco.append(pos)
         else:
             pagos_originales.append(pos)

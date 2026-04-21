@@ -1056,7 +1056,16 @@ class SAPSyncOrchestrator:
             cuentas_conf.filter(tipo="COMISION").values_list("cuenta", flat=True)
         )
 
-        hkonts_base = SaldoBancario.objects.values_list("hkont", flat=True).distinct()
+        # ⚡ NUEVA LÓGICA DE DESCUBRIMIENTO DINÁMICO DE FAMILIAS BANCARIAS
+        hkonts_saldos = set(
+            SaldoBancario.objects.values_list("hkont", flat=True).distinct()
+        )
+        hkonts_partidas = set(
+            PartidaPosicion.objects.filter(ractt__startswith="11")
+            .values_list("ractt", flat=True)
+            .distinct()
+        )
+        todas_las_cuentas_db = hkonts_saldos | hkonts_partidas
 
         (
             cuentas_reales,
@@ -1066,22 +1075,39 @@ class SAPSyncOrchestrator:
             cuentas_egresos,
             cuentas_ingresos,
         ) = set(), set(), set(), set(), set(), set()
+        familias = defaultdict(set)
 
-        for hkont in hkonts_base:
-            cuentas_reales.add(hkont)
-            base = hkont[:-1]
-            for sufijo in range(1, 8):
-                cta = f"{base}{sufijo}"
-                cuentas_todas.add(cta)
-                suf_str = str(sufijo)
-                if suf_str in ("1", "2", "7"):
-                    cuentas_egresos.add(cta)
-                if suf_str in ("3", "4", "6"):
-                    cuentas_ingresos.add(cta)
-                if suf_str == "2":
-                    cuentas_t_2.add(cta)
-                if suf_str == "3":
-                    cuentas_t_3.add(cta)
+        for cta in todas_las_cuentas_db:
+            cta_str = str(cta)
+            if not cta_str:
+                continue
+            base = cta_str[:-1]
+            ultimo = cta_str[-1]
+            familias[base].add(ultimo)
+
+        for base, terminaciones in familias.items():
+            cuenta_cero = f"{base}0"
+            cuentas_reales.add(cuenta_cero)
+            cuentas_todas.add(cuenta_cero)
+
+            subcuentas = [t for t in terminaciones if t in "1234567"]
+
+            if not subcuentas:
+                # CUENTA STANDALONE
+                cuentas_egresos.add(cuenta_cero)
+                cuentas_ingresos.add(cuenta_cero)
+            else:
+                for sufijo in subcuentas:
+                    cta = f"{base}{sufijo}"
+                    cuentas_todas.add(cta)
+                    if sufijo in ("1", "2", "7"):
+                        cuentas_egresos.add(cta)
+                    if sufijo in ("3", "4", "6"):
+                        cuentas_ingresos.add(cta)
+                    if sufijo == "2":
+                        cuentas_t_2.add(cta)
+                    if sufijo == "3":
+                        cuentas_t_3.add(cta)
 
         q_base = Q(
             ractt__in=cuentas_todas | set_comision | cuentas_reales,
@@ -1106,12 +1132,15 @@ class SAPSyncOrchestrator:
             )
             .values_list("belnr", flat=True)
         )
-        zrs_relacionados = set(
-            PartidaPosicion.objects.filter(partida__belnr__in=zps_belnrs)
+        zrs_zh_relacionados = set(
+            PartidaPosicion.objects.filter(
+                partida__belnr__in=zps_belnrs, partida__blart__in=["ZR", "ZH"]
+            )
             .exclude(augbl="")
             .exclude(augbl__in=zps_belnrs)
             .values_list("augbl", flat=True)
         )
+
         facturas_pagadas_por_zp = set(
             PartidaPosicion.objects.filter(augbl__in=zps_belnrs).values_list(
                 "partida__belnr", flat=True
@@ -1123,7 +1152,7 @@ class SAPSyncOrchestrator:
             | Q(partida__belnr__in=augbl_set)
             | Q(augbl__in=augbl_set)
             | Q(partida__belnr__in=zps_belnrs)
-            | Q(partida__belnr__in=zrs_relacionados)
+            | Q(partida__belnr__in=zrs_zh_relacionados)
             | Q(partida__belnr__in=facturas_pagadas_por_zp)
         )
 
@@ -1153,14 +1182,13 @@ class SAPSyncOrchestrator:
         todas_posiciones = []
 
         for pos in todas_posiciones_brutas:
+            # Seguimos alimentando el mapa para las comisiones
             if pos.ractt in cuentas_reales:
                 mapa_banco_real[pos.partida.belnr] = pos.ractt
-            else:
-                todas_posiciones.append(pos)
+            todas_posiciones.append(pos)
 
-        # ⚡ INYECCIÓN DE set_dif_cambio a la función de transferencias
         operaciones_internas, todas_posiciones = procesar_transferencias_y_divisas(
-            todas_posiciones, cuentas_todas, set_dif_cambio
+            todas_posiciones, cuentas_todas | cuentas_reales, set_dif_cambio
         )
         comisiones, todas_posiciones = procesar_comisiones_bancarias(
             todas_posiciones, mapa_banco_real, cuentas_comision=set_comision
@@ -1183,8 +1211,8 @@ class SAPSyncOrchestrator:
                     facturas_agrupadas[belnr_doc].append(pos)
                     mapa_factura_zp[belnr_doc] = belnr_doc
 
-            elif belnr_doc in zrs_relacionados or (
-                pos.partida.blart == "ZR" and cuenta_str in cuentas_egresos
+            elif belnr_doc in zrs_zh_relacionados or (
+                pos.partida.blart in ("ZR", "ZH") and cuenta_str in cuentas_egresos
             ):
                 if cuenta_str in cuentas_todas:
                     balde_solo_zrs.append(pos)
@@ -1396,7 +1424,8 @@ class SAPSyncOrchestrator:
             _agregar_auditoria(zp, "ZP abierto. Falló conciliación contra ZR.")
         for zr in zrs_aud:
             _agregar_auditoria(
-                zr, "ZR abierto. Falló conciliación de pago contra lote ZP."
+                zr,
+                f"{zr.partida.blart} abierto. Falló conciliación de pago contra lote ZP.",
             )
         for pos, motivo in ingresos_aud:
             _agregar_auditoria(pos, motivo)

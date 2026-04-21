@@ -7,9 +7,6 @@ class DistribuidorGastos:
         self.cuentas_impuestos = cuentas_impuestos
         self.cuentas_dif_cambio = cuentas_dif_cambio
 
-    def distribuir(self, posiciones_factura):
-        pass
-
 
 def conciliar_cadena_zr_zp_facturas(
     balde_solo_zps,
@@ -64,7 +61,7 @@ def conciliar_cadena_zr_zp_facturas(
         zrs_restantes = list(zrs_grupo)
         zps_restantes = list(zps_grupo)
 
-        # 1. Búsqueda de parejas exactas (1 a 1) con tolerancia del 5%
+        # 1. Búsqueda de parejas exactas (1 a 1) con tolerancia ampliada (10%)
         for zr in list(zrs_restantes):
             monto_zr = abs(float(zr.wsl))
             mejor_zp = None
@@ -76,7 +73,8 @@ def conciliar_cadena_zr_zp_facturas(
                     menor_dif = dif
                     mejor_zp = zp
 
-            if mejor_zp and menor_dif <= (monto_zr * 0.05):
+            # ⚡ Tolerancia del 10% para absorber comisiones directas en USD
+            if mejor_zp and menor_dif <= (monto_zr * 0.10):
                 mapa_zr_a_zps[zr.id] = [mejor_zp]
                 zps_restantes.remove(mejor_zp)
                 zrs_restantes.remove(zr)
@@ -94,7 +92,8 @@ def conciliar_cadena_zr_zp_facturas(
                     suma_temp += abs(float(zr.wsl))
                     zrs_usados.append(zr)
 
-                    if abs(monto_zp - suma_temp) <= (monto_zp * 0.05):
+                    # ⚡ Tolerancia del 10%
+                    if abs(monto_zp - suma_temp) <= (monto_zp * 0.10):
                         # ¡Bingo! Estos ZRs sumados pagan este ZP
                         for zr_usado in zrs_usados:
                             mapa_zr_a_zps[zr_usado.id] = [zp]
@@ -103,8 +102,20 @@ def conciliar_cadena_zr_zp_facturas(
                         break
 
         # 3. Fallback: Lo que sobre se reparte entre los ZPs que quedaron
-        for zr in zrs_restantes:
-            mapa_zr_a_zps[zr.id] = zps_restantes if zps_restantes else zps_grupo
+        if zrs_restantes:
+            for zr in zrs_restantes:
+                mapa_zr_a_zps[zr.id] = zps_restantes if zps_restantes else zps_grupo
+        elif zps_restantes and zrs_grupo:
+            # ⚡ NUEVO: Barredora de huérfanos.
+            # Si sobraron ZPs pequeños (como el de 1,15) pero ya no hay ZRs libres,
+            # se los inyectamos al movimiento de banco más grande del grupo para no perderlos.
+            zr_mayor = max(zrs_grupo, key=lambda x: abs(float(x.wsl)))
+            if zr_mayor.id in mapa_zr_a_zps:
+                # Evitar duplicados por si acaso
+                para_agregar = [
+                    zp for zp in zps_restantes if zp not in mapa_zr_a_zps[zr_mayor.id]
+                ]
+                mapa_zr_a_zps[zr_mayor.id].extend(para_agregar)
 
     # --- FIN DE PRE-EMPAREJAMIENTO ---
 
@@ -196,20 +207,25 @@ def conciliar_cadena_zr_zp_facturas(
                             monto_por_prov[prov] += monto_dividido
                     del monto_por_prov[""]
 
-                # 3. Fallback: Si un proveedor se quedó sin líneas de gasto, usar dummy
+                # 3. Fallback: Si un proveedor se quedó sin líneas de gasto, usar la cuenta del acreedor
                 for prov in proveedores_en_doc:
                     if prov not in lineas_por_prov or not lineas_por_prov[prov]:
-                        monto_dummy = (
-                            sum(
-                                abs(float(p.wsl))
-                                for p in facturas_agrupadas[f_id]
-                                if getattr(p, "koart", "") in ("K", "D")
-                                and (p.lifnr == prov or p.kunnr == prov)
-                            )
-                            or 1.0
+                        monto_dummy = 0.0
+                        cuenta_acreedor = (
+                            "CUENTA_CONTABLE_ND"  # Valor por defecto extremo
                         )
+
+                        # ⚡ Buscar la línea original del acreedor/proveedor para heredar su cuenta real
+                        for p in facturas_agrupadas[f_id]:
+                            if getattr(p, "koart", "") in ("K", "D") and (
+                                p.lifnr == prov or p.kunnr == prov
+                            ):
+                                cuenta_acreedor = str(p.ractt)
+                                monto_dummy += abs(float(p.wsl))
+
+                        monto_dummy = monto_dummy or 1.0
                         lineas_por_prov[prov].append(
-                            {"cuenta": "CUENTA_CONTABLE_ND", "monto": monto_dummy}
+                            {"cuenta": cuenta_acreedor, "monto": monto_dummy}
                         )
                         monto_por_prov[prov] += monto_dummy
 
