@@ -95,9 +95,15 @@
             Ingrese con sus credenciales de SAP. El acceso está restringido a usuarios autorizados.
         </p>
 
-        {% if form.errors %}
+        {% if messages %}
+            {% for message in messages %}
+                <div class="error-msg" style="border-left: 4px solid #d93025;">
+                    <b>Alerta:</b> {{ message }}
+                </div>
+            {% endfor %}
+        {% elif form.errors %}
             <div class="error-msg">
-                Credenciales inválidas o su usuario aún <b>no ha sido aprobado</b> por un Administrador.
+                Por favor, verifique sus credenciales.
             </div>
         {% endif %}
 

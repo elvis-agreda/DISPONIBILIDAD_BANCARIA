@@ -1,11 +1,15 @@
 import requests
-from django.contrib.auth import get_user_model
+import urllib3
+from django.conf import settings
+from django.contrib import messages
 from django.contrib.auth.backends import BaseBackend
 
-from sap_sync.services.sap_client import AMBIENTE_SAP, SAPServiceURL
+from sap_sync.services.sap_client import SAPServiceURL
 
-# CAMBIO LA FORMA DE VERIFICAR EL USUARIO AHORA NECESITO BUSCAR EN LA TODO: SUIM PARA VER LOS ROLES Y CAMBIAR EL MODELO
-UsuarioSAP = get_user_model()
+from .models import TransaccionSAP, UsuarioSAP
+
+# Desactivar advertencias de certificados SSL si no usas HTTPS estricto hacia SAP
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 
 class AutenticacionSAPBackend(BaseBackend):
@@ -13,34 +17,103 @@ class AutenticacionSAPBackend(BaseBackend):
         if not username or not password:
             return None
 
-        url_ping = f"{AMBIENTE_SAP}{SAPServiceURL.SALDOS_BANCARIOS}/$metadata"
+        # 1. Buscamos qué transacciones debemos consultar a SAP
+        tcodes_config = TransaccionSAP.objects.all().order_by("-jerarquia")
+
+        if not tcodes_config.exists():
+            if request:
+                messages.error(
+                    request,
+                    "Error de Sistema: No hay transacciones SAP configuradas para mapear roles. Contacte al administrador.",
+                )
+            return None
+
+        lista_tcodes = [{"TCODE": t.tcode} for t in tcodes_config]
+
+        # 2. Construimos la petición a SAP
+        url_check = f"{SAPServiceURL.USER_TCODE_CHECK}"
+        payload = {
+            "USER_LOGON": [{"USERNAME": username.upper(), "PASSWORD": password}],
+            "TCODES_CHECK": lista_tcodes,
+        }
 
         try:
-            respuesta = requests.get(url_ping, auth=(username, password), timeout=5)
+            respuesta = requests.get(
+                url_check,
+                params={"sap-client": settings.SAP_AMBIENTE},
+                json=payload,
+                auth=(settings.SAP_USERNAME, settings.SAP_PASSWORD),
+                timeout=15,
+                verify=False,
+            )
 
             if respuesta.status_code == 200:
-                # SAP dice que la contraseña es correcta. ¿Existe en Django?
-                try:
-                    usuario = UsuarioSAP.objects.get(username=username)
-                except UsuarioSAP.DoesNotExist:
-                    # ES NUEVO: Se crea, pero se bloquea (is_active=False)
-                    UsuarioSAP.objects.create(
-                        username=username,
-                        is_active=False,  # <-- BLOQUEADO HASTA APROBACIÓN
-                        is_staff=False,  # <-- NO ENTRA AL ADMIN
-                        aprobado=False,
-                    )
-                    return None  # No lo dejamos entrar hoy.
+                data = respuesta.json()
+                mensaje_sap = data.get("MESSAGE", "")
 
-                # Si ya existía, verificamos si un Admin lo aprobó y activó
-                if not usuario.is_active or not usuario.aprobado:
+                # 3. Validar la respuesta de SAP
+                if mensaje_sap == "USUARIO VALIDO":
+                    # Extraer transacciones que vinieron con "ALLOWED": "X"
+                    tcodes_permitidos = [
+                        item["TCODE"]
+                        for item in data.get("TCODES_CHECK", [])
+                        if item.get("ALLOWED") == "X"
+                    ]
+
+                    if not tcodes_permitidos:
+                        if request:
+                            messages.error(
+                                request,
+                                "Acceso Denegado: Su usuario es válido en SAP pero no posee ninguna transacción autorizada para este portal.",
+                            )
+                        return None
+
+                    # 4. Asignar el rol basado en la transacción de mayor jerarquía permitida
+                    rol_asignado = "ANALISTA"  # Default
+                    is_staff = False
+                    is_superuser = False
+
+                    for config in tcodes_config:
+                        if config.tcode in tcodes_permitidos:
+                            rol_asignado = config.rol_asociado
+                            if rol_asignado == "ADMINISTRADOR":
+                                is_staff = True
+                                is_superuser = True
+                            break
+
+                    # 5. Crear o actualizar el usuario en Django
+                    usuario, created = UsuarioSAP.objects.get_or_create(
+                        username=username.upper()
+                    )
+                    usuario.is_active = True
+                    usuario.rol = rol_asignado
+                    usuario.is_staff = is_staff
+                    usuario.is_superuser = is_superuser
+                    usuario.transacciones_sap = tcodes_permitidos
+                    usuario.set_password(
+                        password
+                    )  # Lo guardamos para tener sincronía local
+                    usuario.save()
+
+                    return usuario
+                else:
+                    if request:
+                        messages.error(request, f"SAP: {mensaje_sap}")
                     return None
 
-                return usuario
-
-            return None  # Contraseña mala en SAP
+            else:
+                if request:
+                    messages.error(
+                        request,
+                        f"Error del servidor SAP (HTTP {respuesta.status_code})",
+                    )
+                return None
 
         except requests.RequestException:
+            if request:
+                messages.error(
+                    request, "Error de red: No se pudo contactar al servidor SAP."
+                )
             return None
 
     def get_user(self, user_id):

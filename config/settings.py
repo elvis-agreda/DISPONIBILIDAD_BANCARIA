@@ -12,7 +12,7 @@ https://docs.djangoproject.com/en/6.0/ref/settings/
 
 import os
 from pathlib import Path
-from django.utils.translation import gettext_lazy as _
+
 import environ
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
@@ -22,11 +22,11 @@ env = environ.Env(DEBUG=(bool, False))
 
 environ.Env.read_env(os.path.join(BASE_DIR, ".env"))
 
-LOGIN_URL = 'login'
+LOGIN_URL = "login"
 
-LOGIN_REDIRECT_URL = 'dashboard'
+LOGIN_REDIRECT_URL = "dashboard"
 
-LOGOUT_REDIRECT_URL = 'login'
+LOGOUT_REDIRECT_URL = "login"
 
 # --- TUNING DE RENDIMIENTO SAP SYNC ---
 # Si la variable no existe en el .env, toma un valor por defecto seguro.
@@ -77,7 +77,6 @@ INSTALLED_APPS = [
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
-    "django.middleware.locale.LocaleMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
@@ -90,7 +89,7 @@ ROOT_URLCONF = "config.urls"
 TEMPLATES = [
     {
         "BACKEND": "django.template.backends.django.DjangoTemplates",
-        "DIRS": [BASE_DIR / 'templates'],
+        "DIRS": [BASE_DIR / "templates"],
         "APP_DIRS": True,
         "OPTIONS": {
             "context_processors": [
@@ -142,6 +141,23 @@ HUEY = {
         "periodic": True,
     },
 }
+
+# --- CONFIGURACIÓN DE AUTENTICACIÓN ---
+AUTHENTICATION_BACKENDS = [
+    "users.backends.AutenticacionSAPBackend",  # 1️⃣ Siempre intenta autenticar contra SAP primero
+    "django.contrib.auth.backends.ModelBackend",  # 2️⃣ Respaldo local SOLO para poder usar tu SuperUser/Admin
+]
+# --- CONFIGURACIÓN DE MODELO DE USUARIO ---
+AUTH_USER_MODEL = "users.UsuarioSAP"
+# --- CONFIGURACIÓN DE SESIONES ---
+SESSION_COOKIE_AGE = 3600  # 1 hora exacta en segundos
+SESSION_SAVE_EVERY_REQUEST = (
+    True  # Renueva la hora de expiración con cada clic/actividad
+)
+SESSION_EXPIRE_AT_BROWSER_CLOSE = (
+    True  # Opcional: Cierra la sesión si cierran el navegador
+)
+
 LOGGING = {
     "version": 1,
     "disable_existing_loggers": False,
@@ -174,23 +190,20 @@ LOGGING = {
 
 LANGUAGE_CODE = "es-ve"
 
-TIME_ZONE = "UTC"
+TIME_ZONE = "America/Caracas"
 
 USE_TZ = True
 
-USE_I18N = True
+USE_I18N = False
 
 USE_L10N = True
 
 USE_THOUSAND_SEPARATOR = True
 
-THOUSAND_SEPARATOR = '.'
-DECIMAL_SEPARATOR = ','
+THOUSAND_SEPARATOR = "."
+DECIMAL_SEPARATOR = ","
 NUMBER_GROUPING = 3
-LANGUAGES = [
-    ('es', _('Español')),
-    ('en', _('English')),
-]
+
 # Static files (CSS, JavaScript, Images)
 # https://docs.djangoproject.com/en/6.0/howto/static-files/
 

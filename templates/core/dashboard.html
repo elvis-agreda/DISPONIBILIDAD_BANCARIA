@@ -1,6 +1,5 @@
 {% extends 'base.html' %}
 {% load dict_tags %}
-{% load i18n %}
 
 {% block content %}
 <style>
@@ -23,7 +22,7 @@
 
 <div class="container-fluid mt-3">
     <div class="d-flex justify-content-between align-items-center mb-3 pb-2 border-bottom" style="border-color: #6eb43f !important;">
-        <h2 style="color: #3c4295; font-weight: bold;">{% translate "Disponibilidad Bancaria" %}</h2>
+        <h2 style="color: #3c4295; font-weight: bold;">Disponibilidad Bancaria</h2>
     </div>
 
     <div class="card p-3 shadow-sm border-0 mb-3 bg-light">
@@ -31,7 +30,7 @@
             <div class="col-md-5">
                 <form method="get" class="d-flex align-items-end gap-2">
                     <div class="flex-grow-1">
-                        <label class="small fw-bold text-primary">{% translate "1. Seleccionar Periodo y Vista" %}:</label>
+                        <label class="small fw-bold text-primary">Seleccionar Periodo y Vista:</label>
                         <div class="d-flex gap-2">
                             <select name="mes" class="form-select form-select-sm border-primary">
                                 {% for num, nombre in meses_lista %}
@@ -44,34 +43,39 @@
                                 {% endfor %}
                             </select>
                             <select name="vista" id="vista_selector" class="form-select form-select-sm border-primary" style="min-width: 170px;">
-                                <option value="SEPARADO" {% if vista_sel == 'SEPARADO' %}selected{% endif %}>🗂️ Por Monedas (Original)</option>
-                                <option value="VES" {% if vista_sel == 'VES' %}selected{% endif %}>🇻🇪 Consolidado VED</option>
-                                <option value="USD" {% if vista_sel == 'USD' %}selected{% endif %}>💵 Consolidado USD</option>
-                                <option value="EUR" {% if vista_sel == 'EUR' %}selected{% endif %}>💶 Consolidado EUR</option>
-                            </select>
+                            <option value="SEPARADO" {% if vista_sel == 'SEPARADO' %}selected{% endif %}>
+                                Por Monedas (Original)
+                            </option>
+
+                            {% for moneda in monedas_disponibles %}
+                                <option value="{{ moneda }}" {% if vista_sel == moneda %}selected{% endif %}>
+                                    Consolidado {{ moneda }}
+                                </option>
+                            {% endfor %}
+                        </select>
                         </div>
                     </div>
-                    <button type="submit" class="btn btn-sm btn-primary">{% translate "Ver" %}</button>
+                    <button type="submit" class="btn btn-sm btn-primary">Ver</button>
                 </form>
             </div>
             
             <div class="col-md-2 d-flex align-items-end">
                 <button type="button" onclick="iniciarPaso8()" class="btn btn-sm w-100" style="background-color: #ffd700; color: #000; font-weight: bold; border: 1px solid #d4af37;" title="Recalcula el dashboard utilizando el mes y año seleccionados a la izquierda.">
-                    <i class="fas fa-calculator"></i> {% translate "Recalcular este Mes" %}
+                    <i class="fas fa-calculator"></i> Recalcular este Mes
                 </button>
             </div>
 
             <div class="col-md-5 border-start border-2 ms-auto ps-3">
                 <form id="sync-form" class="d-flex align-items-end gap-2">
                     <div class="flex-grow-1">
-                        <label class="small fw-bold text-success">{% translate "2. Sincronizar desde SAP (Opcional)" %}:</label>
+                        <label class="small fw-bold text-success">Sincronizar desde SAP (Opcional):</label>
                         <div class="d-flex gap-2">
                             <input type="date" id="start_date" class="form-control form-control-sm border-success" required>
                             <input type="date" id="end_date" class="form-control form-control-sm border-success" required>
                         </div>
                     </div>
                     <button type="button" onclick="iniciarSync()" class="btn btn-sm btn-success fw-bold">
-                        <i class="fas fa-sync-alt"></i> {% translate "Descargar SAP" %}
+                        <i class="fas fa-sync-alt"></i> Descargar SAP
                     </button>
                 </form>
             </div>
@@ -83,9 +87,9 @@
             <h4 style="color: #1b5e20; font-weight: bold; border-bottom: 2px solid #6eb43f; padding-bottom: 5px;">
                 <i class="fas {% if vista_sel == 'SEPARADO' %}fa-layer-group{% else %}fa-globe{% endif %} me-2"></i> 
                 {% if vista_sel == 'SEPARADO' %}
-                    {% translate "Disponibilidad en" %} {{ bloque.moneda }}
+                    Disponibilidad en {{ bloque.moneda }}
                 {% else %}
-                    {% translate "Disponibilidad Consolidada (" %} {{ bloque.moneda }} )
+                    Disponibilidad Consolidada ( {{ bloque.moneda }} )
                 {% endif %}
             </h4>
         </div>
@@ -94,19 +98,19 @@
             <table class="table table-bordered align-middle mb-0 main-table-moneda" style="font-size: 0.78rem;">
                 <thead class="text-white text-center" style="background-color: #3c4295;">
                     <tr>
-                        <th rowspan="3" class="align-middle text-start col-categoria">{% translate "Categoría" %}</th>
+                        <th rowspan="3" class="align-middle text-start col-categoria">Categoría</th>
                         {% for semana in semanas %}
                             {% for dia in semana.dias %}
-                                <th class="py-1 week-{{ semana.id }}-col {% if not semana.tiene_hoy %}hidden-col{% endif %}">{{ dia.fecha_obj|date:"D"|upper }}</th>
+                                <th class="py-1 week-{{ semana.id }}-col {% if not semana.tiene_hoy %}hidden-col{% endif %}">{{ dia.nombre_dia | upper }}</th>
                             {% endfor %}
                             <th rowspan="2" class="align-middle text-dark" style="background-color: #ffd700; min-width: 120px;">
-                                {% translate "Semana" %} {{ semana.id }}
+                                Semana {{ semana.id }}
                                 <button class="btn-toggle-week" onclick="toggleSemana('{{ semana.id }}')">
                                     <i class="fas {% if semana.tiene_hoy %}fa-compress-arrows-alt{% else %}fa-expand-arrows-alt{% endif %} icon-week-{{ semana.id }}"></i>
                                 </button>
                             </th>
                         {% endfor %}
-                        <th rowspan="2" class="align-middle bg-success" style="min-width: 130px;">{% translate "TOTAL MENSUAL" %}</th>
+                        <th rowspan="2" class="align-middle bg-success" style="min-width: 130px;">TOTAL MENSUAL</th>
                     </tr>
                     <tr>
                         {% for semana in semanas %}
@@ -165,7 +169,7 @@
     {% empty %}
         <div class="alert alert-warning mt-4 text-center fw-bold shadow-sm">
             <i class="fas fa-exclamation-triangle fa-2x mb-2 d-block text-warning"></i>
-            {% translate "No hay datos de disponibilidad para el periodo seleccionado." %}
+            "No hay datos de disponibilidad para el periodo seleccionado."
         </div>
     {% endfor %}
 </div>
@@ -184,7 +188,7 @@
     <div class="modal-content shadow-lg">
       <div class="modal-header text-white" style="background-color: #3c4295;">
         <h5 class="modal-title">
-            <i class="fas fa-list-ul me-2"></i> {% translate "Detalle de Asientos" %} - <span id="dd-titulo"></span>
+             "Detalle de Asientos" - <span id="dd-titulo"></span>
         </h5>
         <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
       </div>
@@ -194,16 +198,16 @@
               <div class="col-md-6">
                   <div class="input-group input-group-sm">
                       <span class="input-group-text"><i class="fas fa-search"></i></span>
-                      <input type="text" id="dd-search" class="form-control" placeholder="{% translate 'Buscar documento, proveedor, referencia...' %}" onkeyup="if(event.key==='Enter') buscarDrillDown()">
-                      <button class="btn btn-primary" onclick="buscarDrillDown()">{% translate "Buscar" %}</button>
+                      <input type="text" id="dd-search" class="form-control" placeholder="Buscar documento, proveedor, referencia..." onkeyup="if(event.key==='Enter') buscarDrillDown()">
+                      <button class="btn btn-primary" onclick="buscarDrillDown()">Buscar</button>
                       <button class="btn btn-danger" onclick="limpiarFiltros()" title="Limpiar Filtros"><i class="fas fa-times"></i></button>
                   </div>
               </div>
               <div class="col-md-6 text-end">
                   <span id="dd-info" class="me-3 small text-muted fw-bold"></span>
                   <div class="btn-group btn-group-sm">
-                      <button class="btn btn-outline-secondary" id="btn-prev" onclick="cambiarPagina(-1)"><i class="fas fa-chevron-left"></i> {% translate "Ant." %}</button>
-                      <button class="btn btn-outline-secondary" id="btn-next" onclick="cambiarPagina(1)">{% translate "Sig." %} <i class="fas fa-chevron-right"></i></button>
+                      <button class="btn btn-outline-secondary" id="btn-prev" onclick="cambiarPagina(-1)"><i class="fas fa-chevron-left"></i> Ant.</button>
+                      <button class="btn btn-outline-secondary" id="btn-next" onclick="cambiarPagina(1)">Sig. <i class="fas fa-chevron-right"></i></button>
                   </div>
               </div>
           </div>
@@ -231,7 +235,7 @@
     <div class="modal-content shadow-lg">
       <div class="modal-header text-white" style="background-color: #6eb43f;">
         <h5 class="modal-title">
-            <i class="fas fa-file-invoice me-2"></i> {% translate "Explorador SAP:" %} <span id="doc-sap-titulo" class="fw-bold ms-2"></span>
+            <i class="fas fa-file-invoice me-2"></i>"Explorador SAP:" <span id="doc-sap-titulo" class="fw-bold ms-2"></span>
         </h5>
         <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
       </div>
@@ -280,24 +284,24 @@
     function iniciarSync() {
         const start = document.getElementById('start_date').value;
         const end = document.getElementById('end_date').value;
-        if(!start || !end) return mostrarToast("{% translate 'Por favor complete el rango de fechas' %}", 'warning');
-        mostrarToast("{% translate 'Iniciando sincronización con SAP...' %}", 'primary');
+        if(!start || !end) return mostrarToast("'Por favor complete el rango de fechas'", 'warning');
+        mostrarToast("'Iniciando sincronización con SAP...'", 'primary');
         fetch("{% url 'sync_manual' %}", {
             method: "POST", headers: {"Content-Type": "application/json", "X-CSRFToken": "{{ csrf_token }}"}, body: JSON.stringify({ fecha_inicio: start, fecha_fin: end })
-        }).then(res => res.json()).then(data => mostrarToast(data.status || "{% translate 'Sincronización ejecutada con éxito' %}", 'success')).catch(err => mostrarToast("{% translate 'Error al conectar con el servidor' %}", 'error'));
+        }).then(res => res.json()).then(data => mostrarToast(data.status || "'Sincronización ejecutada con éxito'", 'success')).catch(err => mostrarToast("'Error al conectar con el servidor'", 'error'));
     }
 
     function iniciarPaso8() {
         const mes = document.querySelector('select[name="mes"]').value;
         const anio = document.querySelector('select[name="anio"]').value;
-        if(!mes || !anio) return mostrarToast("{% translate 'Por favor seleccione un periodo válido' %}", 'warning');
+        if(!mes || !anio) return mostrarToast("'Por favor seleccione un periodo válido'", 'warning');
         const start = `${anio}-${mes.padStart(2, '0')}-01`;
         const lastDay = new Date(anio, mes, 0).getDate();
         const end = `${anio}-${mes.padStart(2, '0')}-${lastDay.toString().padStart(2, '0')}`;
         mostrarToast(`Iniciando recálculo del mes de ${start.substring(0,7)}...`, 'primary');
         fetch("{% url 'sync_paso8' %}", {
             method: "POST", headers: {"Content-Type": "application/json", "X-CSRFToken": "{{ csrf_token }}"}, body: JSON.stringify({ fecha_inicio: start, fecha_fin: end })
-        }).then(res => res.json()).then(data => { if (data.error) mostrarToast(data.error, 'error'); else mostrarToast(data.status, 'success'); }).catch(err => mostrarToast("{% translate 'Error' %}", 'error'));
+        }).then(res => res.json()).then(data => { if (data.error) mostrarToast(data.error, 'error'); else mostrarToast(data.status, 'success'); }).catch(err => mostrarToast("'Error'", 'error'));
     }
 
     // ==========================================
@@ -355,8 +359,8 @@
 
     function cargarDrillDown() {
         const thead = document.getElementById('dd-head'), tbody = document.getElementById('dd-body');
-        tbody.innerHTML = '<tr><td colspan="10" class="text-center py-4"><i class="fas fa-spinner fa-spin"></i> {% translate "Cargando datos..." %}</td></tr>';
-        
+        tbody.innerHTML = '<tr><td colspan="10" class="text-center py-4"><i class="fas fa-spinner fa-spin"></i> "Cargando datos..."</td></tr>';
+
         const url = `{% url 'detalle_asientos_api' %}?categoria=${encodeURIComponent(currentCategoria)}&moneda=${encodeURIComponent(currentMoneda)}&fecha=${currentFecha}&vista=${currentVista}&page=${currentPage}&search=${encodeURIComponent(currentSearch)}&sort=${ddSortCampo}&order=${ddSortOrder}`;
         
         fetch(url).then(res => res.json()).then(data => {
@@ -369,7 +373,7 @@
             
             tbody.innerHTML = '';
             if(data.datos.length === 0) {
-                tbody.innerHTML = `<tr><td colspan="${data.columnas.length}" class="text-center text-muted py-4">{% translate "No se encontraron registros." %}</td></tr>`;
+                tbody.innerHTML = `<tr><td colspan="${data.columnas.length}" class="text-center text-muted py-4">"No se encontraron registros."</td></tr>`;
                 document.getElementById('dd-totales-badges').innerHTML = ''; document.getElementById('dd-info').innerText = '0 registros';
                 document.getElementById('btn-prev').disabled = true; document.getElementById('btn-next').disabled = true; return;
             }
@@ -431,7 +435,7 @@
             
             document.getElementById('dd-info').innerText = `Pág. ${data.page} de ${data.pages} (Total: ${data.total})`;
             document.getElementById('btn-prev').disabled = (data.page <= 1); document.getElementById('btn-next').disabled = (data.page >= data.pages);
-        }).catch(err => tbody.innerHTML = '<tr><td colspan="10" class="text-center text-danger">{% translate "Error de conexión." %}</td></tr>');
+        }).catch(err => tbody.innerHTML = '<tr><td colspan="10" class="text-center text-danger">"Error de conexión."</td></tr>');
     }
 
     // ==========================================
@@ -443,7 +447,7 @@
         document.getElementById('doc-sap-titulo').innerText = (isAugbl ? "Compensación " : "Documento ") + numero;
         const tbody = document.getElementById('doc-sap-body');
         sapSortCampo = ''; sapSortOrder = 'asc';
-        tbody.innerHTML = '<tr><td colspan="9" class="text-center py-4"><i class="fas fa-spinner fa-spin"></i> {% translate "Extrayendo líneas de SAP..." %}</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="9" class="text-center py-4"><i class="fas fa-spinner fa-spin"></i>"Extrayendo líneas de SAP..."</td></tr>';
         bootstrap.Modal.getOrCreateInstance(document.getElementById('docSapModal')).show();
         fetch(`{% url 'detalle_documento_api' %}?${isAugbl ? 'augbl' : 'belnr'}=${numero}`).then(res => res.json()).then(data => { sapDataOriginal = data.datos; pintarTablaSap(); }).catch(err => tbody.innerHTML = '<tr><td colspan="9" class="text-center text-danger">Error.</td></tr>');
     }

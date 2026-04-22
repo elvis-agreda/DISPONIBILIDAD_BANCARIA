@@ -1,5 +1,6 @@
 from decimal import Decimal
 
+from django.conf import settings
 from django.db import models
 
 
@@ -191,3 +192,25 @@ class ClasificacionGasto(models.Model):
 
     def __str__(self):
         return f"{self.cuenta_gasto} - {self.clasificacion}"
+
+
+class Notificacion(models.Model):
+    usuario = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="notificaciones",
+    )
+    mensaje = models.CharField("Mensaje", max_length=255)
+    tipo = models.CharField(
+        "Tipo", max_length=20, default="success"
+    )  # Puede ser: success, error, warning, info
+    leida = models.BooleanField("¿Leída?", default=False)
+    creada_en = models.DateTimeField("Creada en", auto_now_add=True)
+
+    class Meta:
+        verbose_name = "Notificación"
+        verbose_name_plural = "Notificaciones"
+        ordering = ["-creada_en"]
+
+    def __str__(self):
+        return f"{self.usuario.username} - {self.mensaje}"

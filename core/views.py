@@ -9,9 +9,21 @@ from django.shortcuts import render
 from django.utils import timezone
 from django.views.decorators.http import require_POST
 
-from core.models import ColumnaDrillDown, DashboardConsolidado
+from core.models import ColumnaDrillDown, DashboardConsolidado, Notificacion
 from sap_sync.models import PartidaPosicion, TasaBCV
 from sap_sync.tasks import ejecutar_paso8_manual, ejecutar_sync_sap
+
+
+@login_required
+def leer_notificaciones_api(request):
+    nots = Notificacion.objects.filter(usuario=request.user, leida=False)
+
+    data = []
+    for n in nots:
+        data.append({"id": n.id, "mensaje": n.mensaje, "tipo": n.tipo})
+
+    nots.update(leida=True)
+    return JsonResponse({"notificaciones": data})
 
 
 @login_required
@@ -30,6 +42,22 @@ def dashboard_view(request):
     mes_sel = int(mes_str)
     anio_sel = int(anio_str)
 
+    # ⚡ NUEVO: Obtener monedas únicas disponibles para el select dinámico
+    monedas_db = TasaBCV.objects.values_list("moneda", flat=True).distinct()
+    monedas_consolidadas = set(m.upper() for m in monedas_db if m)
+
+    # Aseguramos que la moneda local principal siempre esté
+    monedas_consolidadas.add("VED")
+
+    # Limpiamos nomenclaturas redundantes si existen en la BD
+    if "VES" in monedas_consolidadas:
+        monedas_consolidadas.remove("VES")
+    if "BS" in monedas_consolidadas:
+        monedas_consolidadas.remove("BS")
+
+    # Ordenamos la lista (puedes poner VES de primero si lo deseas con una lógica extra)
+    monedas_disponibles = sorted(list(monedas_consolidadas))
+
     inicio_mes = date(anio_sel, mes_sel, 1)
     _, ultimo_dia = monthrange(anio_sel, mes_sel)
     fin_mes = date(anio_sel, mes_sel, ultimo_dia)
@@ -46,8 +74,6 @@ def dashboard_view(request):
         tasas_dict[cursor.isoformat()] = {}
         # Asumimos que las monedas locales siempre valen 1 contra sí mismas por si faltan en la tabla
         tasas_dict[cursor.isoformat()]["VES"] = 1.0
-        tasas_dict[cursor.isoformat()]["VED"] = 1.0
-        tasas_dict[cursor.isoformat()]["BS"] = 1.0
         cursor += timedelta(days=1)
 
     tasas_db = TasaBCV.objects.filter(fecha__range=[inicio_mes, fin_mes])
@@ -110,13 +136,15 @@ def dashboard_view(request):
             semana_actual["tiene_hoy"] = True
 
         fecha_str = cursor.isoformat()
-
+        # ⚡ NUEVO: Mapeamos los días forzosamente a español
+        dias_espanol = ["LUN", "MAR", "MIE", "JUE", "VIE", "SAB", "DOM"]
+        nombre_dia = dias_espanol[cursor.weekday()]
         semana_actual["dias"].append(
             {
                 "fecha_str": fecha_str,
                 "fecha_obj": cursor,
                 "numero_dia": cursor.day,
-                # Pintamos USD y EUR si existen, sino devuelve None
+                "nombre_dia": nombre_dia,
                 "tasa_usd": tasas_dict.get(fecha_str, {}).get("USD"),
                 "tasa_eur": tasas_dict.get(fecha_str, {}).get("EUR"),
             }
@@ -172,6 +200,7 @@ def dashboard_view(request):
             "meses_lista": meses_lista,
             "anios_lista": range(hoy.year - 5, hoy.year + 2),
             "hoy": hoy,
+            "monedas_disponibles": monedas_disponibles,
         },
     )
 
@@ -328,7 +357,7 @@ def disparar_paso8_manual(request):
         fecha_inicio = datetime.strptime(fecha_inicio_str, "%Y-%m-%d").date()
         fecha_fin = datetime.strptime(fecha_fin_str, "%Y-%m-%d").date()
 
-        ejecutar_paso8_manual(fecha_inicio, fecha_fin)
+        ejecutar_paso8_manual(fecha_inicio, fecha_fin, usuario_id=request.user.id)
 
         return JsonResponse(
             {"status": "Cálculo de Disponibilidad (Paso 8) iniciado correctamente"}

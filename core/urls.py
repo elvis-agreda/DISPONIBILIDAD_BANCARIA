@@ -15,4 +15,7 @@ urlpatterns = [
         views.detalle_documento_api,
         name="detalle_documento_api",
     ),
+    path(
+        "api/notificaciones/", views.leer_notificaciones_api, name="api_notificaciones"
+    ),
 ]

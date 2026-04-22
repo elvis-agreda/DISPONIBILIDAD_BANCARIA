@@ -31,6 +31,7 @@ class SAPServiceURL:
         f"{URL_BASE}:{SAP_PORT}/sap/opu/odata/sap/ZFI_SALDO_BANCARIO_CDS/"
     )
     TASA_BCV = f"{URL_BASE}:{SAP_PORT}/fmcall/ZFI_TASA_BCV"
+    USER_TCODE_CHECK = f"{URL_BASE}:{SAP_PORT}/fmcall/ZHTTP_USER_TCODE_CHECK"
 
 
 # ── Cliente OData V2 principal ──────────────────────────────────────────────
