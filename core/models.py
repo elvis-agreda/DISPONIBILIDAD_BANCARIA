@@ -155,6 +155,18 @@ class ColumnaDrillDown(models.Model):
     orden = models.IntegerField("Orden", default=0)
     activo = models.BooleanField("Activa", default=True)
 
+    # ⚡ NUEVAS OPCIONES DINÁMICAS
+    es_buscable = models.BooleanField(
+        "Filtrable al Clic",
+        default=False,
+        help_text="Si se activa, hacer clic en este valor filtrará la tabla.",
+    )
+    abre_documento = models.BooleanField(
+        "Abre Explorador SAP",
+        default=False,
+        help_text="Si se activa, convertirá los números de 10 dígitos en links a SAP.",
+    )
+
     class Meta:
         verbose_name = "Columna de Drill-Down"
         verbose_name_plural = "Configuración Drill-Down"

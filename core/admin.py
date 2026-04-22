@@ -63,7 +63,15 @@ class ColumnaDrillDownForm(forms.ModelForm):
 @admin.register(ColumnaDrillDown)
 class ColumnaDrillDownAdmin(admin.ModelAdmin):
     form = ColumnaDrillDownForm
-    list_display = ["etiqueta", "campo_bd", "tipo_dato", "orden", "activo"]
-    list_editable = ["orden", "activo"]
+    list_display = [
+        "etiqueta",
+        "campo_bd",
+        "tipo_dato",
+        "es_buscable",
+        "abre_documento",
+        "orden",
+        "activo",
+    ]
+    list_editable = ["es_buscable", "abre_documento", "orden", "activo"]
     list_filter = ["tipo_dato", "activo"]
     ordering = ["orden"]

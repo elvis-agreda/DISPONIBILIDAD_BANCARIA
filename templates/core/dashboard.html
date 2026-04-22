@@ -4,67 +4,34 @@
 
 {% block content %}
 <style>
-    /* FIJACIÓN DE COLUMNA DE CATEGORÍA Y CABECERAS PARA MÚLTIPLES TABLAS */
-    .table-responsive {
-        max-height: 78vh;
-        overflow: auto;
-        border: 1px solid var(--border-color);
+    .table-responsive { max-height: 78vh; overflow: auto; border: 1px solid var(--border-color); }
+    .main-table-moneda th.col-categoria, .main-table-moneda td.col-categoria {
+        position: sticky !important; left: 0 !important; z-index: 10 !important;
+        background-color: var(--body-bg, #fff) !important; border-right: 2px solid #6eb43f !important; min-width: 240px;
     }
-    
-    .main-table-moneda th.col-categoria,
-    .main-table-moneda td.col-categoria {
-        position: sticky !important;
-        left: 0 !important;
-        z-index: 10 !important;
-        background-color: var(--body-bg, #fff) !important;
-        border-right: 2px solid #6eb43f !important;
-        min-width: 240px;
-    }
-
-    .main-table-moneda th.col-categoria {
-        z-index: 11 !important;
-        background-color: #3c4295 !important;
-        color: white !important;
-    }
-
-    .btn-toggle-week {
-        cursor: pointer;
-        padding: 2px 6px;
-        background: rgba(255, 255, 255, 0.2);
-        border: 1px solid white;
-        color: white;
-        border-radius: 4px;
-        font-size: 0.7rem;
-    }
-
+    .main-table-moneda th.col-categoria { z-index: 11 !important; background-color: #3c4295 !important; color: white !important; }
+    .btn-toggle-week { cursor: pointer; padding: 2px 6px; background: rgba(255, 255, 255, 0.2); border: 1px solid white; color: white; border-radius: 4px; font-size: 0.7rem; }
     .hidden-col { display: none !important; }
-
-    /* Estilos de Totales */
     .col-semanal { background-color: #fff8cc !important; color: #000 !important; }
     .col-mensual { background-color: #e8f5e9 !important; font-weight: bold; color: #1b5e20 !important; }
-
     [data-theme='dark'] td.col-categoria { background-color: #1a1d21 !important; }
     [data-theme='dark'] .col-semanal { background-color: #3d3a25 !important; color: #fff !important; }
     [data-theme='dark'] .col-mensual { background-color: #1b2e1c !important; }
-
-    /* Estilo para las cabeceras ordenables */
-    .th-sortable {
-        cursor: pointer;
-        user-select: none;
-        transition: background-color 0.2s;
-    }
-    .th-sortable:hover {
-        background-color: rgba(255,255,255,0.1);
-    }
+    .th-sortable { cursor: pointer; user-select: none; transition: background-color 0.2s; }
+    .th-sortable:hover { background-color: rgba(255,255,255,0.1); }
 </style>
 
 <div class="container-fluid mt-3">
+    <div class="d-flex justify-content-between align-items-center mb-3 pb-2 border-bottom" style="border-color: #6eb43f !important;">
+        <h2 style="color: #3c4295; font-weight: bold;">{% translate "Disponibilidad Bancaria" %}</h2>
+    </div>
+
     <div class="card p-3 shadow-sm border-0 mb-3 bg-light">
         <div class="row align-items-end">
-            <div class="col-md-4">
+            <div class="col-md-5">
                 <form method="get" class="d-flex align-items-end gap-2">
                     <div class="flex-grow-1">
-                        <label class="small fw-bold text-primary">{% translate "1. Seleccionar Periodo" %}:</label>
+                        <label class="small fw-bold text-primary">{% translate "1. Seleccionar Periodo y Vista" %}:</label>
                         <div class="d-flex gap-2">
                             <select name="mes" class="form-select form-select-sm border-primary">
                                 {% for num, nombre in meses_lista %}
@@ -75,6 +42,12 @@
                                 {% for a in anios_lista %}
                                     <option value="{{ a|stringformat:'d' }}" {% if a == anio_sel %}selected{% endif %}>{{ a|stringformat:'d' }}</option>
                                 {% endfor %}
+                            </select>
+                            <select name="vista" id="vista_selector" class="form-select form-select-sm border-primary" style="min-width: 170px;">
+                                <option value="SEPARADO" {% if vista_sel == 'SEPARADO' %}selected{% endif %}>🗂️ Por Monedas (Original)</option>
+                                <option value="VES" {% if vista_sel == 'VES' %}selected{% endif %}>🇻🇪 Consolidado VED</option>
+                                <option value="USD" {% if vista_sel == 'USD' %}selected{% endif %}>💵 Consolidado USD</option>
+                                <option value="EUR" {% if vista_sel == 'EUR' %}selected{% endif %}>💶 Consolidado EUR</option>
                             </select>
                         </div>
                     </div>
@@ -88,7 +61,7 @@
                 </button>
             </div>
 
-            <div class="col-md-6 border-start border-2 ms-auto ps-4">
+            <div class="col-md-5 border-start border-2 ms-auto ps-3">
                 <form id="sync-form" class="d-flex align-items-end gap-2">
                     <div class="flex-grow-1">
                         <label class="small fw-bold text-success">{% translate "2. Sincronizar desde SAP (Opcional)" %}:</label>
@@ -108,7 +81,12 @@
     {% for bloque in matriz_final %}
         <div class="d-flex justify-content-between align-items-center mt-4 mb-2">
             <h4 style="color: #1b5e20; font-weight: bold; border-bottom: 2px solid #6eb43f; padding-bottom: 5px;">
-                <i class="fas fa-coins me-2"></i> {% translate "Disponibilidad en" %} {{ bloque.moneda }}
+                <i class="fas {% if vista_sel == 'SEPARADO' %}fa-layer-group{% else %}fa-globe{% endif %} me-2"></i> 
+                {% if vista_sel == 'SEPARADO' %}
+                    {% translate "Disponibilidad en" %} {{ bloque.moneda }}
+                {% else %}
+                    {% translate "Disponibilidad Consolidada (" %} {{ bloque.moneda }} )
+                {% endif %}
             </h4>
         </div>
 
@@ -119,12 +97,12 @@
                         <th rowspan="3" class="align-middle text-start col-categoria">{% translate "Categoría" %}</th>
                         {% for semana in semanas %}
                             {% for dia in semana.dias %}
-                                <th class="py-1 week-{{ semana.id }}-col">{{ dia.fecha_obj|date:"D"|upper }}</th>
+                                <th class="py-1 week-{{ semana.id }}-col {% if not semana.tiene_hoy %}hidden-col{% endif %}">{{ dia.fecha_obj|date:"D"|upper }}</th>
                             {% endfor %}
                             <th rowspan="2" class="align-middle text-dark" style="background-color: #ffd700; min-width: 120px;">
                                 {% translate "Semana" %} {{ semana.id }}
                                 <button class="btn-toggle-week" onclick="toggleSemana('{{ semana.id }}')">
-                                    <i class="fas fa-compress-arrows-alt" id="icon-week-{{ semana.id }}"></i>
+                                    <i class="fas {% if semana.tiene_hoy %}fa-compress-arrows-alt{% else %}fa-expand-arrows-alt{% endif %} icon-week-{{ semana.id }}"></i>
                                 </button>
                             </th>
                         {% endfor %}
@@ -133,15 +111,16 @@
                     <tr>
                         {% for semana in semanas %}
                             {% for dia in semana.dias %}
-                                <th class="py-1 border-top-0 week-{{ semana.id }}-col">{{ dia.numero_dia }}</th>
+                                <th class="py-1 border-top-0 week-{{ semana.id }}-col {% if not semana.tiene_hoy %}hidden-col{% endif %}">{{ dia.numero_dia }}</th>
                             {% endfor %}
                         {% endfor %}
                     </tr>
                     <tr style="background-color: #f0f1f8; color: #3c4295;">
                         {% for semana in semanas %}
                             {% for dia in semana.dias %}
-                                <th class="py-0 small week-{{ semana.id }}-col" style="font-size: 0.62rem; font-weight: normal;">
-                                    TC: {{ dia.tasa_bcv|formato_tasa }}
+                                <th class="py-0 small week-{{ semana.id }}-col {% if not semana.tiene_hoy %}hidden-col{% endif %}" style="font-size: 0.62rem; font-weight: normal; line-height: 1.3;">
+                                    <div class="text-primary fw-bold">USD: {{ dia.tasa_usd|formato_tasa }}</div>
+                                    <div class="text-success fw-bold">EUR: {{ dia.tasa_eur|formato_tasa }}</div>
                                 </th>
                             {% endfor %}
                             <th class="col-semanal small">Acum.</th>
@@ -155,10 +134,10 @@
                         <td class="fw-bold col-categoria">{{ categoria }}</td>
                         {% for semana in semanas %}
                             {% for dia in semana.dias %}
-                                <td class="text-end week-{{ semana.id }}-col">
+                                <td class="text-end week-{{ semana.id }}-col {% if not semana.tiene_hoy %}hidden-col{% endif %}">
                                     {% with valor=cat_data.dias|get_val:dia.fecha_str %}
-                                        {% if valor %}
-                                            <a href="javascript:void(0)" onclick="verDrillDown('{{ cat_data.categoria_base|escapejs }}', '{{ cat_data.moneda|escapejs }}', '{{ dia.fecha_str }}')" class="text-decoration-none fw-bold">
+                                        {% if valor is not None %}
+                                            <a href="javascript:void(0)" onclick="verDrillDown('{{ cat_data.categoria_base|escapejs }}', '{{ cat_data.moneda|escapejs }}', '{{ dia.fecha_str }}')" class="text-decoration-none fw-bold {% if valor == 0 %}text-muted{% endif %}">
                                                 {{ valor|formato_ve }}
                                             </a>
                                         {% else %}-{% endif %}
@@ -167,7 +146,11 @@
                             {% endfor %}
                             <td class="text-end fw-bold col-semanal">
                                 {% with sem_id=semana.id|stringformat:"s" %}
-                                    {{ cat_data.totales_semana|get_val:sem_id|formato_ve }}
+                                    {% with total_sem=cat_data.totales_semana|get_val:sem_id %}
+                                        {% if total_sem is not None %}
+                                            {{ total_sem|formato_ve }}
+                                        {% else %}0,00{% endif %}
+                                    {% endwith %}
                                 {% endwith %}
                             </td>
                         {% endfor %}
@@ -208,14 +191,15 @@
       
       <div class="modal-body pb-0" style="background-color: #f8f9fa;">
           <div class="row mb-2">
-              <div class="col-md-5">
+              <div class="col-md-6">
                   <div class="input-group input-group-sm">
                       <span class="input-group-text"><i class="fas fa-search"></i></span>
-                      <input type="text" id="dd-search" class="form-control" placeholder="{% translate 'Buscar documento, proveedor, referencia...' %}" onkeyup="if(event.key==='Enter') cargarDrillDown()">
-                      <button class="btn btn-primary" onclick="cargarDrillDown()">{% translate "Buscar" %}</button>
+                      <input type="text" id="dd-search" class="form-control" placeholder="{% translate 'Buscar documento, proveedor, referencia...' %}" onkeyup="if(event.key==='Enter') buscarDrillDown()">
+                      <button class="btn btn-primary" onclick="buscarDrillDown()">{% translate "Buscar" %}</button>
+                      <button class="btn btn-danger" onclick="limpiarFiltros()" title="Limpiar Filtros"><i class="fas fa-times"></i></button>
                   </div>
               </div>
-              <div class="col-md-7 text-end">
+              <div class="col-md-6 text-end">
                   <span id="dd-info" class="me-3 small text-muted fw-bold"></span>
                   <div class="btn-group btn-group-sm">
                       <button class="btn btn-outline-secondary" id="btn-prev" onclick="cambiarPagina(-1)"><i class="fas fa-chevron-left"></i> {% translate "Ant." %}</button>
@@ -235,9 +219,9 @@
       </div>
       
       <div class="d-flex justify-content-end align-items-center px-4 py-3" style="background-color: #e8f5e9; border-top: 3px solid #6eb43f; border-bottom-left-radius: inherit; border-bottom-right-radius: inherit; z-index: 20;">
-           <span class="text-dark fw-bold me-3">TOTAL FILTRADO:</span>
-           <div id="dd-totales-badges"></div>
+           <div id="dd-totales-badges" class="ms-auto text-end"></div>
       </div>
+
     </div>
   </div>
 </div>
@@ -270,83 +254,50 @@
 </div>
 
 <script>
-    const formatter = new Intl.NumberFormat('de-DE', {
-        minimumFractionDigits: 2,
-        maximumFractionDigits: 2
-    });
+    const formatter = new Intl.NumberFormat('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
     function mostrarToast(mensaje, tipo = 'success') {
         const toastEl = document.getElementById('sistemaToast');
-        const toastMensaje = document.getElementById('toastMensaje');
         const btnClose = toastEl.querySelector('.btn-close');
-
         toastEl.className = 'toast align-items-center border-0';
         btnClose.classList.add('btn-close-white');
-
         if (tipo === 'success') toastEl.classList.add('bg-success', 'text-white');
         else if (tipo === 'error') toastEl.classList.add('bg-danger', 'text-white');
-        else if (tipo === 'warning') {
-            toastEl.classList.add('bg-warning', 'text-dark');
-            btnClose.classList.remove('btn-close-white');
-        } else toastEl.classList.add('bg-primary', 'text-white');
-
-        toastMensaje.innerText = mensaje;
+        else if (tipo === 'warning') { toastEl.classList.add('bg-warning', 'text-dark'); btnClose.classList.remove('btn-close-white'); }
+        else toastEl.classList.add('bg-primary', 'text-white');
+        document.getElementById('toastMensaje').innerText = mensaje;
         new bootstrap.Toast(toastEl, { delay: 4000 }).show();
     }
 
     function toggleSemana(weekId) {
-        const columns = document.querySelectorAll(`.week-${weekId}-col`);
-        const icon = document.getElementById(`icon-week-${weekId}`);
-        columns.forEach(col => col.classList.toggle('hidden-col'));
-        icon.classList.toggle('fa-compress-arrows-alt');
-        icon.classList.toggle('fa-expand-arrows-alt');
+        document.querySelectorAll(`.week-${weekId}-col`).forEach(col => col.classList.toggle('hidden-col'));
+        document.querySelectorAll(`.icon-week-${weekId}`).forEach(icon => {
+            icon.classList.toggle('fa-compress-arrows-alt');
+            icon.classList.toggle('fa-expand-arrows-alt');
+        });
     }
 
     function iniciarSync() {
         const start = document.getElementById('start_date').value;
         const end = document.getElementById('end_date').value;
-        
-        if(!start || !end) {
-            return mostrarToast("{% translate 'Por favor complete el rango de fechas' %}", 'warning');
-        }
-        
+        if(!start || !end) return mostrarToast("{% translate 'Por favor complete el rango de fechas' %}", 'warning');
         mostrarToast("{% translate 'Iniciando sincronización con SAP...' %}", 'primary');
-
         fetch("{% url 'sync_manual' %}", {
-            method: "POST",
-            headers: {"Content-Type": "application/json", "X-CSRFToken": "{{ csrf_token }}"},
-            body: JSON.stringify({ fecha_inicio: start, fecha_fin: end })
-        })
-        .then(res => res.json())
-        .then(data => mostrarToast(data.status || "{% translate 'Sincronización ejecutada con éxito' %}", 'success'))
-        .catch(err => mostrarToast("{% translate 'Error al conectar con el servidor para la sincronización' %}", 'error'));
+            method: "POST", headers: {"Content-Type": "application/json", "X-CSRFToken": "{{ csrf_token }}"}, body: JSON.stringify({ fecha_inicio: start, fecha_fin: end })
+        }).then(res => res.json()).then(data => mostrarToast(data.status || "{% translate 'Sincronización ejecutada con éxito' %}", 'success')).catch(err => mostrarToast("{% translate 'Error al conectar con el servidor' %}", 'error'));
     }
 
     function iniciarPaso8() {
         const mes = document.querySelector('select[name="mes"]').value;
         const anio = document.querySelector('select[name="anio"]').value;
-        
-        if(!mes || !anio) {
-            return mostrarToast("{% translate 'Por favor seleccione un periodo válido en el filtro superior' %}", 'warning');
-        }
-        
+        if(!mes || !anio) return mostrarToast("{% translate 'Por favor seleccione un periodo válido' %}", 'warning');
         const start = `${anio}-${mes.padStart(2, '0')}-01`;
         const lastDay = new Date(anio, mes, 0).getDate();
         const end = `${anio}-${mes.padStart(2, '0')}-${lastDay.toString().padStart(2, '0')}`;
-        
         mostrarToast(`Iniciando recálculo del mes de ${start.substring(0,7)}...`, 'primary');
-
         fetch("{% url 'sync_paso8' %}", {
-            method: "POST",
-            headers: {"Content-Type": "application/json", "X-CSRFToken": "{{ csrf_token }}"},
-            body: JSON.stringify({ fecha_inicio: start, fecha_fin: end })
-        })
-        .then(res => res.json())
-        .then(data => {
-            if (data.error) mostrarToast(data.error, 'error');
-            else mostrarToast(data.status || "{% translate 'Cálculo ejecutado con éxito' %}", 'success');
-        })
-        .catch(err => mostrarToast("{% translate 'Error al conectar con el servidor' %}", 'error'));
+            method: "POST", headers: {"Content-Type": "application/json", "X-CSRFToken": "{{ csrf_token }}"}, body: JSON.stringify({ fecha_inicio: start, fecha_fin: end })
+        }).then(res => res.json()).then(data => { if (data.error) mostrarToast(data.error, 'error'); else mostrarToast(data.status, 'success'); }).catch(err => mostrarToast("{% translate 'Error' %}", 'error'));
     }
 
     // ==========================================
@@ -358,253 +309,174 @@
     let currentPage = 1;
     let ddSortCampo = '';
     let ddSortOrder = 'asc';
+    let currentSearch = ''; 
+    let currentVista = document.getElementById('vista_selector') ? document.getElementById('vista_selector').value : 'SEPARADO';
 
     function verDrillDown(categoria, moneda, fecha) {
-        currentCategoria = categoria;
-        currentMoneda = moneda;
-        currentFecha = fecha;
-        currentPage = 1;
-        ddSortCampo = '';
-        ddSortOrder = 'asc';
+        currentCategoria = categoria; currentMoneda = moneda; currentFecha = fecha; 
+        currentPage = 1; ddSortCampo = ''; ddSortOrder = 'asc'; currentSearch = '';
+        currentVista = document.getElementById('vista_selector').value;
         
         document.getElementById('dd-search').value = '';
         document.getElementById('dd-titulo').innerText = `${categoria} (${moneda}) - ${fecha}`;
-        
-        const modalEl = document.getElementById('drillDownModal');
-        bootstrap.Modal.getOrCreateInstance(modalEl).show();
-        
+        bootstrap.Modal.getOrCreateInstance(document.getElementById('drillDownModal')).show();
         cargarDrillDown();
     }
 
-    function cambiarPagina(delta) {
-        currentPage += delta;
-        cargarDrillDown();
-    }
-
-    function buscarEnDrillDown(texto) {
-        document.getElementById('dd-search').value = texto;
+    function cambiarPagina(delta) { currentPage += delta; cargarDrillDown(); }
+    
+    function buscarDrillDown() {
+        currentSearch = document.getElementById('dd-search').value.trim();
         currentPage = 1;
+        cargarDrillDown();
+    }
+    
+    function buscarEnDrillDown(texto) { 
+        currentSearch = texto;
+        document.getElementById('dd-search').value = texto; 
+        currentPage = 1; 
+        cargarDrillDown(); 
+    }
+
+    function limpiarFiltros() {
+        currentSearch = '';
+        document.getElementById('dd-search').value = '';
+        currentPage = 1;
+        ddSortCampo = '';
+        ddSortOrder = 'asc';
         cargarDrillDown();
     }
 
     function ordenarDrillDown(campo) {
-        if (ddSortCampo === campo) {
-            ddSortOrder = ddSortOrder === 'asc' ? 'desc' : 'asc';
-        } else {
-            ddSortCampo = campo;
-            ddSortOrder = 'asc';
-        }
-        currentPage = 1;
-        cargarDrillDown();
+        if (ddSortCampo === campo) ddSortOrder = ddSortOrder === 'asc' ? 'desc' : 'asc';
+        else { ddSortCampo = campo; ddSortOrder = 'asc'; }
+        currentPage = 1; cargarDrillDown();
     }
 
     function cargarDrillDown() {
-        const thead = document.getElementById('dd-head');
-        const tbody = document.getElementById('dd-body');
-        const search = document.getElementById('dd-search').value;
-        
+        const thead = document.getElementById('dd-head'), tbody = document.getElementById('dd-body');
         tbody.innerHTML = '<tr><td colspan="10" class="text-center py-4"><i class="fas fa-spinner fa-spin"></i> {% translate "Cargando datos..." %}</td></tr>';
         
-        const url = `{% url 'detalle_asientos_api' %}?categoria=${encodeURIComponent(currentCategoria)}&moneda=${encodeURIComponent(currentMoneda)}&fecha=${currentFecha}&page=${currentPage}&search=${encodeURIComponent(search)}&sort=${ddSortCampo}&order=${ddSortOrder}`;
+        const url = `{% url 'detalle_asientos_api' %}?categoria=${encodeURIComponent(currentCategoria)}&moneda=${encodeURIComponent(currentMoneda)}&fecha=${currentFecha}&vista=${currentVista}&page=${currentPage}&search=${encodeURIComponent(currentSearch)}&sort=${ddSortCampo}&order=${ddSortOrder}`;
         
-        fetch(url)
-            .then(res => res.json())
-            .then(data => {
-                thead.innerHTML = '';
+        fetch(url).then(res => res.json()).then(data => {
+            thead.innerHTML = '';
+            data.columnas.forEach(col => {
+                let icon = '<i class="fas fa-sort ms-2" style="color: rgba(255,255,255,0.4);"></i>';
+                if (ddSortCampo === col.campo) icon = ddSortOrder === 'asc' ? '<i class="fas fa-sort-up ms-2 text-warning"></i>' : '<i class="fas fa-sort-down ms-2 text-warning"></i>';
+                thead.innerHTML += `<th class="text-center text-nowrap th-sortable" onclick="ordenarDrillDown('${col.campo}')">${col.etiqueta}${icon}</th>`;
+            });
+            
+            tbody.innerHTML = '';
+            if(data.datos.length === 0) {
+                tbody.innerHTML = `<tr><td colspan="${data.columnas.length}" class="text-center text-muted py-4">{% translate "No se encontraron registros." %}</td></tr>`;
+                document.getElementById('dd-totales-badges').innerHTML = ''; document.getElementById('dd-info').innerText = '0 registros';
+                document.getElementById('btn-prev').disabled = true; document.getElementById('btn-next').disabled = true; return;
+            }
+
+            let totalesPagina = {};
+
+            data.datos.forEach(row => {
+                let mon = row['rwcur'] || currentMoneda;
+                let montoFila = parseFloat(row['monto_total']) || 0;
+                totalesPagina[mon] = (totalesPagina[mon] || 0) + montoFila;
+
+                const tr = document.createElement('tr');
                 data.columnas.forEach(col => {
-                    let icon = '<i class="fas fa-sort ms-2" style="color: rgba(255,255,255,0.4);"></i>';
-                    if (ddSortCampo === col.campo) {
-                        icon = ddSortOrder === 'asc' ? '<i class="fas fa-sort-up ms-2 text-warning"></i>' : '<i class="fas fa-sort-down ms-2 text-warning"></i>';
-                    }
-                    thead.innerHTML += `<th class="text-center text-nowrap th-sortable" onclick="ordenarDrillDown('${col.campo}')" title="Clic para ordenar">${col.etiqueta}${icon}</th>`;
-                });
+                    let valor = row[col.campo] || '-';
+                    let celdaHtml = `<td class="text-center">-</td>`;
 
-                tbody.innerHTML = '';
-                if(data.datos.length === 0) {
-                    tbody.innerHTML = `<tr><td colspan="${data.columnas.length}" class="text-center text-muted py-4">{% translate "No se encontraron registros que coincidan con la búsqueda." %}</td></tr>`;
-                    document.getElementById('dd-totales-badges').innerHTML = '';
-                    document.getElementById('dd-info').innerText = '0 registros';
-                    document.getElementById('btn-prev').disabled = true;
-                    document.getElementById('btn-next').disabled = true;
-                    return;
-                }
-                
-                data.datos.forEach(row => {
-                    const tr = document.createElement('tr');
-                    data.columnas.forEach(col => {
-                        let valor = row[col.campo] || '-';
-                        let celdaHtml = `<td class="text-center">-</td>`;
-
-                        if (valor !== '-') {
-                            if (col.tipo === 'MONTO' || ['monto', 'monto_base', 'monto_total'].includes(col.campo)) {
-                                celdaHtml = `<td class="text-end fw-bold text-nowrap">${formatter.format(valor)}</td>`;
-                            } else if (col.tipo === 'TASA') {
-                                let tasaFormateada = parseFloat(valor).toLocaleString('de-DE', {
-                                    minimumFractionDigits: 2, maximumFractionDigits: 10
-                                });
-                                celdaHtml = `<td class="text-end text-primary text-nowrap">${tasaFormateada}</td>`;
+                    if (valor !== '-') {
+                        if (col.tipo === 'MONTO' || ['monto', 'monto_base', 'monto_total'].includes(col.campo)) {
+                            celdaHtml = `<td class="text-end fw-bold text-nowrap">${formatter.format(valor)}</td>`;
+                        } else if (col.tipo === 'TASA') {
+                            celdaHtml = `<td class="text-end text-primary text-nowrap">${parseFloat(valor).toLocaleString('de-DE', {minimumFractionDigits: 2, maximumFractionDigits: 10})}</td>`;
+                        } else {
+                            valor = String(valor);
+                            if (col.abre_documento) {
+                                const linkified = valor.replace(/\b(\d{10})\b/g, '<a href="javascript:void(0)" onclick="verDocumentoSAP(\'$1\')" class="text-primary text-decoration-underline fw-bold" title="Abrir Explorador SAP">$1</a>');
+                                celdaHtml = `<td class="text-center" style="max-width: 320px; white-space: normal; word-wrap: break-word; line-height: 1.3;">${linkified}</td>`;
+                            } else if (col.es_buscable) {
+                                celdaHtml = `<td class="text-center text-nowrap"><a href="javascript:void(0)" onclick="buscarEnDrillDown('${valor}')" class="text-primary fw-bold" style="text-decoration: underline dotted;" title="Filtrar por este valor">${valor}</a></td>`;
                             } else {
-                                valor = String(valor);
-                                if (['lifnr', 'kunnr', 'referencia'].includes(col.campo)) {
-                                    celdaHtml = `<td class="text-center text-nowrap"><a href="javascript:void(0)" onclick="buscarEnDrillDown('${valor}')" class="text-primary fw-bold" style="text-decoration: underline dotted;" title="Filtrar por este valor">${valor}</a></td>`;
-                                } else if (['documento_primario'].includes(col.campo)) {
-                                    const linkified = valor.replace(/\b(\d{10})\b/g, '<a href="javascript:void(0)" onclick="verDocumentoSAP(\'$1\')" class="text-primary text-decoration-underline fw-bold" title="Ver posiciones en SAP">$1</a>');
-                                    celdaHtml = `<td class="text-center text-nowrap">${linkified}</td>`;
-                                } else if (['documento_secundario', 'referencia1'].includes(col.campo)) {
-                                    const linkified = valor.replace(/\b(\d{10})\b/g, '<a href="javascript:void(0)" onclick="verDocumentoSAP(\'$1\')" class="text-primary text-decoration-underline fw-bold" title="Ver posiciones en SAP">$1</a>');
-                                    celdaHtml = `<td class="text-center" style="max-width: 320px; white-space: normal; word-wrap: break-word; line-height: 1.3;">${linkified}</td>`;
-                                } else {
-                                    celdaHtml = `<td class="text-center text-nowrap">${valor}</td>`;
-                                }
+                                celdaHtml = `<td class="text-center text-nowrap">${valor}</td>`;
                             }
                         }
-                        tr.innerHTML += celdaHtml;
-                    });
-                    tbody.appendChild(tr);
+                    }
+                    tr.innerHTML += celdaHtml;
                 });
-
-                let partesTotal = [];
-                for (const [moneda, total] of Object.entries(data.totales_moneda)) {
-                    partesTotal.push(`<span class="ms-4" style="color: #1b5e20;">${moneda} <span class="fw-bold fs-5">${formatter.format(total)}</span></span>`);
-                }
-                document.getElementById('dd-totales-badges').innerHTML = partesTotal.join('');
-                
-                document.getElementById('dd-info').innerText = `Pág. ${data.page} de ${data.pages} (Total: ${data.total})`;
-                document.getElementById('btn-prev').disabled = (data.page <= 1);
-                document.getElementById('btn-next').disabled = (data.page >= data.pages);
-            })
-            .catch(err => {
-                tbody.innerHTML = '<tr><td colspan="10" class="text-center text-danger">{% translate "Error de conexión cargando detalles." %}</td></tr>';
+                tbody.appendChild(tr);
             });
+
+            let partesGlobal = [];
+            for (const [moneda, total] of Object.entries(data.totales_moneda)) {
+                partesGlobal.push(`<span class="ms-3" style="color: #1b5e20;">${moneda} <span class="fw-bold fs-5">${formatter.format(total)}</span></span>`);
+            }
+
+            let partesPagina = [];
+            for (const [moneda, total] of Object.entries(totalesPagina)) {
+                partesPagina.push(`<span class="ms-3 text-secondary">${moneda} <span class="fw-bold">${formatter.format(total)}</span></span>`);
+            }
+
+            document.getElementById('dd-totales-badges').innerHTML = `
+                <div class="d-flex flex-column align-items-end" style="line-height: 1.2;">
+                    <div class="small mb-1">
+                        <span class="text-muted fw-bold me-2">TOTAL PÁGINA (Original):</span> ${partesPagina.join(' ')}
+                    </div>
+                    <div>
+                        <span class="text-dark fw-bold me-2">TOTAL GLOBAL (Filtro Actual):</span> ${partesGlobal.join('')}
+                    </div>
+                </div>
+            `;
+            
+            document.getElementById('dd-info').innerText = `Pág. ${data.page} de ${data.pages} (Total: ${data.total})`;
+            document.getElementById('btn-prev').disabled = (data.page <= 1); document.getElementById('btn-next').disabled = (data.page >= data.pages);
+        }).catch(err => tbody.innerHTML = '<tr><td colspan="10" class="text-center text-danger">{% translate "Error de conexión." %}</td></tr>');
     }
 
     // ==========================================
-    // LÓGICA DE MODAL 2: EXPLORADOR SAP 
+    // LÓGICA DE MODAL 2: EXPLORADOR SAP
     // ==========================================
-    let sapDataOriginal = [];
-    let sapSortCampo = '';
-    let sapSortOrder = 'asc';
+    let sapDataOriginal = [], sapSortCampo = '', sapSortOrder = 'asc';
 
     function verDocumentoSAP(numero, isAugbl = false) {
-        const prefijo = isAugbl ? "Compensación " : "Documento ";
-        document.getElementById('doc-sap-titulo').innerText = prefijo + numero;
+        document.getElementById('doc-sap-titulo').innerText = (isAugbl ? "Compensación " : "Documento ") + numero;
         const tbody = document.getElementById('doc-sap-body');
-        
-        sapSortCampo = '';
-        sapSortOrder = 'asc';
+        sapSortCampo = ''; sapSortOrder = 'asc';
         tbody.innerHTML = '<tr><td colspan="9" class="text-center py-4"><i class="fas fa-spinner fa-spin"></i> {% translate "Extrayendo líneas de SAP..." %}</td></tr>';
-        
-        const docModalEl = document.getElementById('docSapModal');
-        bootstrap.Modal.getOrCreateInstance(docModalEl).show();
-        
-        const url = `{% url 'detalle_documento_api' %}?${isAugbl ? 'augbl' : 'belnr'}=${numero}`;
-        
-        fetch(url)
-            .then(res => res.json())
-            .then(data => {
-                sapDataOriginal = data.datos;
-                pintarTablaSap();
-            })
-            .catch(err => {
-                tbody.innerHTML = '<tr><td colspan="9" class="text-center text-danger">{% translate "Error cargando posiciones." %}</td></tr>';
-            });
+        bootstrap.Modal.getOrCreateInstance(document.getElementById('docSapModal')).show();
+        fetch(`{% url 'detalle_documento_api' %}?${isAugbl ? 'augbl' : 'belnr'}=${numero}`).then(res => res.json()).then(data => { sapDataOriginal = data.datos; pintarTablaSap(); }).catch(err => tbody.innerHTML = '<tr><td colspan="9" class="text-center text-danger">Error.</td></tr>');
     }
 
     function ordenarSap(campo) {
-        if (sapSortCampo === campo) {
-            sapSortOrder = sapSortOrder === 'asc' ? 'desc' : 'asc';
-        } else {
-            sapSortCampo = campo;
-            sapSortOrder = 'asc';
-        }
-
+        if (sapSortCampo === campo) sapSortOrder = sapSortOrder === 'asc' ? 'desc' : 'asc'; else { sapSortCampo = campo; sapSortOrder = 'asc'; }
         sapDataOriginal.sort((a, b) => {
-            let valA = a[campo];
-            let valB = b[campo];
-            
-            if (valA === null) valA = '';
-            if (valB === null) valB = '';
-
-            if (campo === 'monto' || campo === 'pos') {
-                valA = parseFloat(valA) || 0;
-                valB = parseFloat(valB) || 0;
-            } else {
-                valA = String(valA).toLowerCase();
-                valB = String(valB).toLowerCase();
-            }
-
-            if (valA < valB) return sapSortOrder === 'asc' ? -1 : 1;
-            if (valA > valB) return sapSortOrder === 'asc' ? 1 : -1;
-            return 0;
+            let valA = a[campo] || '', valB = b[campo] || '';
+            if (campo === 'monto' || campo === 'pos') { valA = parseFloat(valA) || 0; valB = parseFloat(valB) || 0; } else { valA = String(valA).toLowerCase(); valB = String(valB).toLowerCase(); }
+            if (valA < valB) return sapSortOrder === 'asc' ? -1 : 1; if (valA > valB) return sapSortOrder === 'asc' ? 1 : -1; return 0;
         });
-
         pintarTablaSap();
     }
 
     function pintarTablaSap() {
-        const thead = document.getElementById('doc-sap-head');
-        const tbody = document.getElementById('doc-sap-body');
-        
-        const columnasSap = [
-            { id: 'belnr', nombre: 'Doc. SAP' },
-            { id: 'pos', nombre: 'Pos' },
-            { id: 'socio', nombre: 'Socio' },
-            { id: 'cuenta', nombre: 'Cuenta' },
-            { id: 'monto', nombre: 'Monto' },
-            { id: 'moneda', nombre: 'Mon' },
-            { id: 'dh', nombre: 'D/H' },
-            { id: 'referencia', nombre: 'Referencia' },
-            { id: 'compensacion', nombre: 'Compensación' }
-        ];
-
+        const thead = document.getElementById('doc-sap-head'), tbody = document.getElementById('doc-sap-body');
+        const columnasSap = [{ id: 'belnr', nombre: 'Doc. SAP' }, { id: 'pos', nombre: 'Pos' }, { id: 'socio', nombre: 'Socio' }, { id: 'cuenta', nombre: 'Cuenta' }, { id: 'monto', nombre: 'Monto' }, { id: 'moneda', nombre: 'Mon' }, { id: 'dh', nombre: 'D/H' }, { id: 'referencia', nombre: 'Referencia' }, { id: 'compensacion', nombre: 'Comp.' }];
         thead.innerHTML = '';
         columnasSap.forEach(col => {
             let icon = '<i class="fas fa-sort ms-2" style="color: rgba(255,255,255,0.4);"></i>';
-            if (sapSortCampo === col.id) {
-                icon = sapSortOrder === 'asc' ? '<i class="fas fa-sort-up ms-2 text-warning"></i>' : '<i class="fas fa-sort-down ms-2 text-warning"></i>';
-            }
-            thead.innerHTML += `<th class="text-center text-nowrap th-sortable" onclick="ordenarSap('${col.id}')" title="Clic para ordenar">${col.nombre}${icon}</th>`;
+            if (sapSortCampo === col.id) icon = sapSortOrder === 'asc' ? '<i class="fas fa-sort-up ms-2 text-warning"></i>' : '<i class="fas fa-sort-down ms-2 text-warning"></i>';
+            thead.innerHTML += `<th class="text-center text-nowrap th-sortable" onclick="ordenarSap('${col.id}')">${col.nombre}${icon}</th>`;
         });
-
         tbody.innerHTML = '';
-        if(sapDataOriginal.length === 0) {
-            tbody.innerHTML = `<tr><td colspan="9" class="text-center text-muted py-4">{% translate "Datos no encontrados en la base local." %}</td></tr>`;
-            document.getElementById('doc-totales-badges').innerHTML = '';
-            return;
-        }
-        
+        if(sapDataOriginal.length === 0) { tbody.innerHTML = `<tr><td colspan="9" class="text-center text-muted py-4">Sin datos.</td></tr>`; document.getElementById('doc-totales-badges').innerHTML = ''; return; }
         let totalesMoneda = {};
-
         sapDataOriginal.forEach(pos => {
-            const montoAbs = Math.abs(pos.monto);
-            const sign = pos.dh === 'H' ? '-' : '';
-            const colorCls = pos.dh === 'S' ? 'text-success' : 'text-danger';
-            const badgeCls = pos.dh === 'S' ? 'bg-success' : 'bg-danger';
-            
-            let val = montoAbs;
-            if (pos.dh === 'H') val = -val;
-            if (!totalesMoneda[pos.moneda]) totalesMoneda[pos.moneda] = 0;
-            totalesMoneda[pos.moneda] += val;
-
-            const augblHtml = pos.compensacion 
-                ? `<a href="javascript:void(0)" onclick="verDocumentoSAP('${pos.compensacion}', true)" class="text-primary text-decoration-underline fw-bold" title="Ver todos los documentos de esta compensación">${pos.compensacion}</a>` 
-                : '-';
-
-            tbody.innerHTML += `
-                <tr>
-                    <td class="text-center fw-bold text-nowrap">${pos.belnr}</td>
-                    <td class="text-center text-nowrap">${pos.pos}</td>
-                    <td class="text-center text-secondary text-nowrap">${pos.socio || '-'}</td>
-                    <td class="text-center fw-bold text-secondary text-nowrap">${pos.cuenta}</td>
-                    <td class="text-end fw-bold ${colorCls} text-nowrap">${sign}${formatter.format(montoAbs)}</td>
-                    <td class="text-center text-nowrap">${pos.moneda}</td>
-                    <td class="text-center text-nowrap"><span class="badge ${badgeCls}">${pos.dh || ''}</span></td>
-                    <td class="text-center" style="max-width: 250px; white-space: normal; word-wrap: break-word; line-height: 1.3;">${pos.referencia || '-'}</td>
-                    <td class="text-center text-nowrap">${augblHtml}</td>
-                </tr>
-            `;
+            const montoAbs = Math.abs(pos.monto), sign = pos.dh === 'H' ? '-' : '', colorCls = pos.dh === 'S' ? 'text-success' : 'text-danger', badgeCls = pos.dh === 'S' ? 'bg-success' : 'bg-danger';
+            let val = pos.dh === 'H' ? -montoAbs : montoAbs;
+            totalesMoneda[pos.moneda] = (totalesMoneda[pos.moneda] || 0) + val;
+            const augblHtml = pos.compensacion ? `<a href="javascript:void(0)" onclick="verDocumentoSAP('${pos.compensacion}', true)" class="text-primary text-decoration-underline fw-bold">${pos.compensacion}</a>` : '-';
+            tbody.innerHTML += `<tr><td class="text-center fw-bold text-nowrap">${pos.belnr}</td><td class="text-center text-nowrap">${pos.pos}</td><td class="text-center text-secondary text-nowrap">${pos.socio || '-'}</td><td class="text-center fw-bold text-secondary text-nowrap">${pos.cuenta}</td><td class="text-end fw-bold ${colorCls} text-nowrap">${sign}${formatter.format(montoAbs)}</td><td class="text-center text-nowrap">${pos.moneda}</td><td class="text-center text-nowrap"><span class="badge ${badgeCls}">${pos.dh || ''}</span></td><td class="text-center" style="max-width: 250px; white-space: normal; word-wrap: break-word; line-height: 1.3;">${pos.referencia || '-'}</td><td class="text-center text-nowrap">${augblHtml}</td></tr>`;
         });
-
         let partesBalance = [];
         for (const [mon, tot] of Object.entries(totalesMoneda)) {
             let textColor = tot < -0.01 ? '#dc3545' : (tot > 0.01 ? '#1b5e20' : '#6c757d');

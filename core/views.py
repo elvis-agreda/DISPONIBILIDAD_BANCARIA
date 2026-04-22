@@ -25,6 +25,7 @@ def dashboard_view(request):
         .replace(".", "")
         .replace(",", "")
     )
+    vista = request.GET.get("vista", "SEPARADO")
 
     mes_sel = int(mes_str)
     anio_sel = int(anio_str)
@@ -37,53 +38,92 @@ def dashboard_view(request):
         fecha_contabilizacion__range=[inicio_mes, fin_mes]
     )
 
-    # ⚡ NUEVO: ESTRUCTURA AGRUPADA PRIMERO POR MONEDA, LUEGO POR CATEGORÍA
+    # 1. ⚡ CARGA LITERAL DESDE LA BASE DE DATOS
+    tasas_dict = {}
+    cursor = inicio_mes
+    while cursor <= fin_mes:
+        # Inicializamos el día
+        tasas_dict[cursor.isoformat()] = {}
+        # Asumimos que las monedas locales siempre valen 1 contra sí mismas por si faltan en la tabla
+        tasas_dict[cursor.isoformat()]["VES"] = 1.0
+        tasas_dict[cursor.isoformat()]["VED"] = 1.0
+        tasas_dict[cursor.isoformat()]["BS"] = 1.0
+        cursor += timedelta(days=1)
+
+    tasas_db = TasaBCV.objects.filter(fecha__range=[inicio_mes, fin_mes])
+    for t in tasas_db:
+        f_str = t.fecha.isoformat()
+        # ⚡ TOMAMOS LA MONEDA LITERAL DE LA BASE DE DATOS (USD, EUR, ETC)
+        mon = t.moneda.upper()
+        tasas_dict[f_str][mon] = float(t.tasa) if t.tasa else 1.0
+
     matriz_por_moneda = {}
 
     for reg in registros:
-        moneda = reg.rwcur or "S/M"
+        # ⚡ TOMAMOS LA MONEDA LITERAL DEL ASIENTO
+        moneda_origen = (reg.rwcur or "S/M").upper()
+
         cat_base = reg.categoria
+        fecha_str = reg.fecha_contabilizacion.isoformat()
+        monto_original = float(reg.monto_total)
 
-        if moneda not in matriz_por_moneda:
-            matriz_por_moneda[moneda] = {}
+        if vista == "SEPARADO":
+            llave_destino = moneda_origen
+            monto_final = monto_original
+        else:
+            llave_destino = vista
 
-        if cat_base not in matriz_por_moneda[moneda]:
-            matriz_por_moneda[moneda][cat_base] = {
+            # MATEMÁTICA PURA: Origen -> Moneda Local -> Destino
+            tasa_origen_val = tasas_dict[fecha_str].get(moneda_origen, 1.0)
+            tasa_destino_val = tasas_dict[fecha_str].get(llave_destino, 1.0)
+
+            monto_en_local = monto_original * tasa_origen_val
+            monto_final = monto_en_local / (
+                tasa_destino_val if tasa_destino_val > 0 else 1.0
+            )
+
+        if llave_destino not in matriz_por_moneda:
+            matriz_por_moneda[llave_destino] = {}
+
+        if cat_base not in matriz_por_moneda[llave_destino]:
+            matriz_por_moneda[llave_destino][cat_base] = {
                 "dias": {},
                 "totales_semana": {},
                 "total_mes": 0.0,
                 "categoria_base": cat_base,
-                "moneda": moneda,
+                "moneda": llave_destino,
             }
 
-        fecha_str = reg.fecha_contabilizacion.isoformat()
-        monto = float(reg.monto_total)
-        matriz_por_moneda[moneda][cat_base]["dias"][fecha_str] = (
-            matriz_por_moneda[moneda][cat_base]["dias"].get(fecha_str, 0) + monto
+        matriz_por_moneda[llave_destino][cat_base]["dias"][fecha_str] = (
+            matriz_por_moneda[llave_destino][cat_base]["dias"].get(fecha_str, 0)
+            + monto_final
         )
-        matriz_por_moneda[moneda][cat_base]["total_mes"] += monto
+        matriz_por_moneda[llave_destino][cat_base]["total_mes"] += monto_final
 
-    # Agrupar días en semanas y calcular acumulados
     semanas = []
-    semana_actual = {"id": 1, "dias": []}
+    semana_actual = {"id": 1, "dias": [], "tiene_hoy": False}
     cursor = inicio_mes
     week_id = 1
 
     while cursor <= fin_mes:
-        tasa = TasaBCV.objects.filter(fecha=cursor).first()
+        if cursor == hoy:
+            semana_actual["tiene_hoy"] = True
+
+        fecha_str = cursor.isoformat()
+
         semana_actual["dias"].append(
             {
-                "fecha_str": cursor.isoformat(),
+                "fecha_str": fecha_str,
                 "fecha_obj": cursor,
                 "numero_dia": cursor.day,
-                "tasa_bcv": tasa.tasa if tasa else None,
+                # Pintamos USD y EUR si existen, sino devuelve None
+                "tasa_usd": tasas_dict.get(fecha_str, {}).get("USD"),
+                "tasa_eur": tasas_dict.get(fecha_str, {}).get("EUR"),
             }
         )
 
         if cursor.weekday() == 6 or cursor == fin_mes:
             semanas.append(semana_actual)
-
-            # ⚡ El cálculo semanal ahora itera sobre todas las monedas
             for moneda, cats in matriz_por_moneda.items():
                 for cat, data in cats.items():
                     suma_sem = sum(
@@ -93,14 +133,12 @@ def dashboard_view(request):
                     data["totales_semana"][str(week_id)] = suma_sem
 
             week_id += 1
-            semana_actual = {"id": week_id, "dias": []}
+            semana_actual = {"id": week_id, "dias": [], "tiene_hoy": False}
 
         cursor += timedelta(days=1)
 
-    # ⚡ ORDENAR PARA ENVIAR A LA PLANTILLA
     matriz_final = []
     for moneda in sorted(matriz_por_moneda.keys()):
-        # Ordenamos alfabéticamente las categorías dentro de la moneda
         categorias_ordenadas = {
             k: matriz_por_moneda[moneda][k]
             for k in sorted(matriz_por_moneda[moneda].keys())
@@ -126,10 +164,11 @@ def dashboard_view(request):
         request,
         "core/dashboard.html",
         {
-            "matriz_final": matriz_final,  # ⚡ Se envía la nueva estructura de Múltiples Tablas
+            "matriz_final": matriz_final,
             "semanas": semanas,
             "mes_sel": mes_sel,
             "anio_sel": anio_sel,
+            "vista_sel": vista,
             "meses_lista": meses_lista,
             "anios_lista": range(hoy.year - 5, hoy.year + 2),
             "hoy": hoy,
@@ -168,6 +207,7 @@ def detalle_asientos_api(request):
     categoria = request.GET.get("categoria")
     moneda = request.GET.get("moneda")
     fecha = request.GET.get("fecha")
+    vista = request.GET.get("vista", "SEPARADO")
     page = int(request.GET.get("page", 1))
     search = request.GET.get("search", "").strip()
     sort_by = request.GET.get("sort", "")
@@ -177,30 +217,36 @@ def detalle_asientos_api(request):
     config_columnas = ColumnaDrillDown.objects.filter(activo=True).order_by("orden")
 
     columnas_info = [
-        {"campo": c.campo_bd, "etiqueta": c.etiqueta, "tipo": c.tipo_dato}
+        {
+            "campo": c.campo_bd,
+            "etiqueta": c.etiqueta,
+            "tipo": c.tipo_dato,
+            "es_buscable": c.es_buscable,
+            "abre_documento": c.abre_documento,
+        }
         for c in config_columnas
     ]
-    campos_para_query = [c.campo_bd for c in config_columnas]
+
+    campos_para_query = list(
+        set([c.campo_bd for c in config_columnas] + ["monto_total", "rwcur"])
+    )
 
     qs = DashboardConsolidado.objects.filter(
-        categoria=categoria, rwcur=moneda, fecha_contabilizacion=fecha
+        categoria=categoria, fecha_contabilizacion=fecha
     )
+
+    # ⚡ FIX: Solo se filtran los Drill-Downs si la vista no es consolidada
+    if vista == "SEPARADO":
+        qs = qs.filter(rwcur=moneda)
 
     if search:
         q_obj = Q()
         for c in config_columnas:
-            if c.tipo_dato == "TEXTO" or c.campo_bd in [
-                "documento_primario",
-                "documento_secundario",
-                "lifnr",
-                "kunnr",
-                "referencia",
-                "referencia1",
-            ]:
+            if c.tipo_dato == "TEXTO" or c.es_buscable or c.abre_documento:
                 q_obj |= Q(**{f"{c.campo_bd}__icontains": search})
         qs = qs.filter(q_obj)
 
-    if sort_by in campos_para_query:
+    if sort_by in [c.campo_bd for c in config_columnas]:
         if order == "desc":
             qs = qs.order_by(f"-{sort_by}")
         else:
@@ -208,7 +254,7 @@ def detalle_asientos_api(request):
 
     total_records = qs.count()
 
-    totales_qs = qs.values("rwcur").annotate(total=Sum("monto_total"))
+    totales_qs = qs.order_by().values("rwcur").annotate(total=Sum("monto_total"))
     totales_moneda = {
         item["rwcur"] or "S/M": float(item["total"] or 0) for item in totales_qs
     }
