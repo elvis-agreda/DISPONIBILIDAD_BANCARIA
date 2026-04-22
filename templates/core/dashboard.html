@@ -390,13 +390,14 @@
                             celdaHtml = `<td class="text-end text-primary text-nowrap">${parseFloat(valor).toLocaleString('de-DE', {minimumFractionDigits: 2, maximumFractionDigits: 10})}</td>`;
                         } else {
                             valor = String(valor);
-                            if (col.abre_documento) {
-                                const linkified = valor.replace(/\b(\d{10})\b/g, '<a href="javascript:void(0)" onclick="verDocumentoSAP(\'$1\')" class="text-primary text-decoration-underline fw-bold" title="Abrir Explorador SAP">$1</a>');
+                           if (col.abre_documento) {
+                                // El cambio está aquí: pasamos de \d{10} a \d+
+                                // Esto buscará cualquier grupo de números (sin importar su longitud)
+                                const linkified = String(valor).replace(/\b(\d+)\b/g, function(match) {
+                                    return `<a href="javascript:void(0)" onclick="verDocumentoSAP('${match}')" class="text-primary text-decoration-underline fw-bold" title="Abrir Explorador SAP">${match}</a>`;
+                                });
+
                                 celdaHtml = `<td class="text-center" style="max-width: 320px; white-space: normal; word-wrap: break-word; line-height: 1.3;">${linkified}</td>`;
-                            } else if (col.es_buscable) {
-                                celdaHtml = `<td class="text-center text-nowrap"><a href="javascript:void(0)" onclick="buscarEnDrillDown('${valor}')" class="text-primary fw-bold" style="text-decoration: underline dotted;" title="Filtrar por este valor">${valor}</a></td>`;
-                            } else {
-                                celdaHtml = `<td class="text-center text-nowrap">${valor}</td>`;
                             }
                         }
                     }
