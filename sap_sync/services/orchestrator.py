@@ -280,7 +280,7 @@ def _guardar_posiciones_bulk(posiciones_raw: list):
                         setattr(obj, campo, nuevo_valor)
                         hay_cambios = True
 
-                if hay_cambios or obj.partida_id != partida_obj.pk:
+                if hay_cambios or obj.partida_id != partida_obj.pk:  # type: ignore
                     obj.partida = partida_obj
                     to_update.append(obj)
             else:
@@ -1276,7 +1276,7 @@ class SAPSyncOrchestrator:
             partida__belnr__in=documentos_ingreso, koart__in=["D", "K"]
         ).values("partida__belnr", "lifnr", "kunnr")
 
-        mapa_socios = {l["partida__belnr"]: l for l in lineas_socios}
+        mapa_socios = {linea["partida__belnr"]: linea for linea in lineas_socios}
 
         for pos in partidas_restantes:
             socio = mapa_socios.get(pos.partida.belnr)

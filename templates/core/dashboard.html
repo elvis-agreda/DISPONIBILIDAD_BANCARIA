@@ -174,21 +174,12 @@
     {% endfor %}
 </div>
 
-<div class="toast-container position-fixed bottom-0 end-0 p-3" style="z-index: 1060;">
-    <div id="sistemaToast" class="toast align-items-center text-white border-0" role="alert" aria-live="assertive" aria-atomic="true">
-        <div class="d-flex">
-            <div class="toast-body fw-bold" id="toastMensaje"></div>
-            <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast" aria-label="Close"></button>
-        </div>
-    </div>
-</div>
-
 <div class="modal fade" id="drillDownModal" tabindex="-1" aria-hidden="true">
   <div class="modal-dialog modal-xl">
     <div class="modal-content shadow-lg">
       <div class="modal-header text-white" style="background-color: #3c4295;">
         <h5 class="modal-title">
-             "Detalle de Asientos" - <span id="dd-titulo"></span>
+            Detalle de Asientos - <span id="dd-titulo"></span>
         </h5>
         <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
       </div>
@@ -235,7 +226,7 @@
     <div class="modal-content shadow-lg">
       <div class="modal-header text-white" style="background-color: #6eb43f;">
         <h5 class="modal-title">
-            <i class="fas fa-file-invoice me-2"></i>"Explorador SAP:" <span id="doc-sap-titulo" class="fw-bold ms-2"></span>
+            <i class="fas fa-file-invoice me-2"></i>Explorador SAP: <span id="doc-sap-titulo" class="fw-bold ms-2"></span>
         </h5>
         <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
       </div>
@@ -261,16 +252,18 @@
     const formatter = new Intl.NumberFormat('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
     function mostrarToast(mensaje, tipo = 'success') {
-        const toastEl = document.getElementById('sistemaToast');
-        const btnClose = toastEl.querySelector('.btn-close');
-        toastEl.className = 'toast align-items-center border-0';
-        btnClose.classList.add('btn-close-white');
-        if (tipo === 'success') toastEl.classList.add('bg-success', 'text-white');
-        else if (tipo === 'error') toastEl.classList.add('bg-danger', 'text-white');
-        else if (tipo === 'warning') { toastEl.classList.add('bg-warning', 'text-dark'); btnClose.classList.remove('btn-close-white'); }
-        else toastEl.classList.add('bg-primary', 'text-white');
-        document.getElementById('toastMensaje').innerText = mensaje;
-        new bootstrap.Toast(toastEl, { delay: 4000 }).show();
+        // Mapear el tipo 'primary' (que usabas en Bootstrap) a 'info' (de SweetAlert2)
+        let iconType = tipo;
+        if (tipo === 'primary') iconType = 'info';
+        
+        // Limpiamos las comillas simples extra que estabas enviando en los botones
+        let textoLimpio = mensaje.replace(/'/g, "");
+
+        // Llamamos al Toast global definido en base.html
+        window.Toast.fire({
+            icon: iconType,
+            title: textoLimpio
+        });
     }
 
     function toggleSemana(weekId) {

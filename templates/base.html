@@ -35,7 +35,15 @@
             transition: all 0.3s ease-in-out; /* Animación suave */
             z-index: 1000;
         }
-
+        #sidebar ul li a {
+            padding: 12px 20px; /* 👈 Menos relleno para hacerlo compacto */
+            font-size: 0.9rem;  /* 👈 Letra más pequeña (antes era 1.05rem) */
+            display: block;
+            color: #e0e0e0;
+            text-decoration: none;
+            transition: all 0.3s;
+            border-left: 4px solid transparent;
+        }
         /* ⚡ CLASE MÁGICA PARA OCULTAR EL MENÚ */
         #sidebar.active {
             margin-left: -250px;
@@ -75,7 +83,20 @@
             background: rgba(255, 255, 255, 0.1);
             border-left: 4px solid #6eb43f; /* Indicador hover verde */
         }
-
+        .swal2-toast {
+            font-size: 0.8rem !important; /* Letra más pequeña */
+            padding: 0.4rem 0.8rem !important; /* Menos espacio interno */
+            min-height: 40px !important;
+            width: auto !important;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1) !important;
+        }
+        .swal2-title {
+            margin: 0px 10px !important;
+        }
+        .swal2-icon {
+            transform: scale(0.6); /* Achica el icono de éxito/error */
+            margin: 0 !important;
+        }
         /* --- SECCIÓN DE USUARIO AL FONDO --- */
         .user-section {
             padding: 20px;
@@ -177,21 +198,24 @@
             });
         });
     </script>
-    <script>
+<script>
     document.addEventListener("DOMContentLoaded", function() {
         
-        // 1. Configuramos el diseño del Toast (Campanita flotante)
+        // 1. Configuramos el diseño del Toast
         const Toast = Swal.mixin({
             toast: true,
-            position: 'top-end',
+            position: 'bottom-end', // 👈 CAMBIADO A LA ESQUINA INFERIOR DERECHA
             showConfirmButton: false,
-            timer: 6000, // Desaparece a los 6 segundos
+            timer: 6000, 
             timerProgressBar: true,
             didOpen: (toast) => {
                 toast.addEventListener('mouseenter', Swal.stopTimer)
                 toast.addEventListener('mouseleave', Swal.resumeTimer)
             }
         });
+
+        // 👈 AÑADIR ESTA LÍNEA PARA HACERLO GLOBAL
+        window.Toast = Toast; 
 
         // 2. Función que va a la base de datos a preguntar si hay mensajes nuevos
         function buscarNotificacionesGlobal() {
@@ -202,7 +226,7 @@
                         data.notificaciones.forEach(notif => {
                             // Disparamos el mensaje en pantalla
                             Toast.fire({
-                                icon: notif.tipo, // 'success' o 'error'
+                                icon: notif.tipo, 
                                 title: notif.mensaje
                             });
                         });
@@ -211,10 +235,7 @@
                 .catch(err => console.error("Error:", err));
         }
 
-        // 3. Ejecutar inmediatamente apenas cargue cualquier página
         buscarNotificacionesGlobal();
-        
-        // 4. Quedarse preguntando cada 10 segundos en silencio
         setInterval(buscarNotificacionesGlobal, 10000); 
     });
 </script>

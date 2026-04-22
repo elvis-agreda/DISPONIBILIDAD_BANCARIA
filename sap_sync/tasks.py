@@ -6,6 +6,8 @@ from typing import Optional
 from huey import crontab
 from huey.contrib.djhuey import db_periodic_task, db_task
 
+from core.models import Notificacion
+
 from .models import SincronizacionLog
 from .services.orchestrator import SAPSyncOrchestrator, _fecha_a_anio_periodo
 
@@ -32,6 +34,8 @@ def ejecutar_sync_sap(
         log = SincronizacionLog.objects.get(pk=sync_log_id)
         log.anio = anio
         log.periodo = periodo
+        if usuario_id:  # 👈 AGREGAR ESTO para asegurar el guardado
+            log.usuario_id = usuario_id  # type: ignore
     else:
         log = SincronizacionLog.objects.create(
             tipo=tipo,
@@ -131,7 +135,8 @@ def reintentar_sincronizacion(log_id: int):
 
     orchestrator = SAPSyncOrchestrator(log)
     try:
-        orchestrator.ejecutar_reintento(log.fecha_inicio, log.fecha_fin, log.anio)
+        anio_seguro = log.anio or str(log.fecha_inicio.year)
+        orchestrator.ejecutar_reintento(log.fecha_inicio, log.fecha_fin, anio_seguro)
     except InterruptedError as exc:
         log.registrar_error(paso=0, mensaje=str(exc))
         log.marcar_finalizado("CANCELADO")
