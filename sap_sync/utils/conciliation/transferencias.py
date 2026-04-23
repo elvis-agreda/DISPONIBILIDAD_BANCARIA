@@ -61,7 +61,6 @@ def procesar_transferencias_y_divisas(
 
         # 3. Clasificación de protagonistas y signos
         for p in posiciones_relevantes:
-            monto = float(p.wsl)
             cuenta_str = str(p.ractt)
 
             if cuenta_str.endswith(("2", "7")):
@@ -69,9 +68,9 @@ def procesar_transferencias_y_divisas(
             elif cuenta_str.endswith(("3", "6")):
                 entradas.append(p)
             elif cuenta_str.endswith("0"):
-                if monto < 0:
+                if p.drcrk == "H":
                     salidas.append(p)
-                elif monto > 0:
+                elif p.drcrk == "S":
                     entradas.append(p)
 
         if not salidas or not entradas:

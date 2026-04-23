@@ -78,6 +78,26 @@ def _ejecutar_batch_thread(
         )
 
 
+# ⚡ NUEVA FUNCIÓN: Descubrimiento dinámico de cuentas Standalone
+def descubrir_cuentas_standalone(cuentas_terminadas_en_0):
+    """
+    Deduce cuáles cuentas terminadas en '0' son Standalone verificando
+    si NUNCA han existido cuentas transitorias (1-9) asociadas a su misma raíz.
+    """
+    standalone_detectadas = set()
+    for cuenta_cero in cuentas_terminadas_en_0:
+        raiz_cuenta = str(cuenta_cero)[:-1]
+        posibles_transitorias = [f"{raiz_cuenta}{i}" for i in range(1, 10)]
+        tiene_transitorias = PartidaPosicion.objects.filter(
+            ractt__in=posibles_transitorias
+        ).exists()
+
+        if not tiene_transitorias:
+            standalone_detectadas.add(cuenta_cero)
+
+    return standalone_detectadas
+
+
 def _procesar_y_guardar_en_paralelo_sap_batch(
     client,
     entity_set,
@@ -230,9 +250,7 @@ def _guardar_posiciones_bulk(posiciones_raw: list):
     if not posiciones_raw:
         return
 
-    # Inicializamos el motor para el modelo PartidaPosicion
     mapper = GeneradorDinamicoSAP("PartidaPosicion")
-    # Extraemos qué campos deben actualizarse (excluyendo llaves primarias)
     llaves_pk = ("bukrs", "docnr", "ryear", "docln")
     campos_update = [
         r.campo_django for r in mapper.reglas if r.campo_django not in llaves_pk
@@ -259,7 +277,6 @@ def _guardar_posiciones_bulk(posiciones_raw: list):
             if not partida_obj or not partida_obj.pk:
                 continue
 
-            # MAGIA DINÁMICA: Obtenemos el diccionario limpio desde SAP
             datos_kwargs = mapper.construir_kwargs(pos)
 
             llave = (
@@ -273,7 +290,6 @@ def _guardar_posiciones_bulk(posiciones_raw: list):
                 obj = existentes[llave]
                 hay_cambios = False
 
-                # Verificamos qué cambió exactamente
                 for campo in campos_update:
                     nuevo_valor = datos_kwargs.get(campo)
                     if getattr(obj, campo) != nuevo_valor:
@@ -284,7 +300,6 @@ def _guardar_posiciones_bulk(posiciones_raw: list):
                     obj.partida = partida_obj
                     to_update.append(obj)
             else:
-                # Se crea el objeto desempaquetando los datos convertidos
                 obj = PartidaPosicion(partida=partida_obj, **datos_kwargs)
                 to_create.append(obj)
                 existentes[llave] = obj
@@ -352,7 +367,6 @@ def _guardar_partidas_desde_sap(registros_sap: list) -> tuple[int, int]:
                 to_create, batch_size=settings.DB_BATCH_SIZE_MEDIUM
             )
             total_creadas += len(to_create)
-            # Refrescamos el diccionario existentes para las posiciones
             nuevos = Partida.objects.filter(
                 bukrs__in=bukrs_set, belnr__in=belnr_set, gjahr__in=gjahr_set
             )
@@ -365,7 +379,6 @@ def _guardar_partidas_desde_sap(registros_sap: list) -> tuple[int, int]:
             )
             total_actualizadas += len(to_update)
 
-        # Extraemos posiciones para enviarlas al bulk (que ya modificamos en la lección anterior)
         for doc in chunk:
             llave_padre = (
                 doc.get("Bukrs", ""),
@@ -383,9 +396,6 @@ def _guardar_partidas_desde_sap(registros_sap: list) -> tuple[int, int]:
     return total_creadas, total_actualizadas
 
 
-# --- CLASE ORQUESTADOR (SERVICE LAYER) ---
-
-
 class SAPSyncOrchestrator:
     """Orquesta el flujo completo de sincronización de SAP, separando la lógica del framework de colas."""
 
@@ -393,7 +403,6 @@ class SAPSyncOrchestrator:
         self.log = log_instance
 
     def ejecutar_sync_completa(self, fecha_inicio: date, fecha_fin: date, anio: str):
-        # Paso 1
         self.log.verificar_cancelacion()
         self.log.refresh_from_db(fields=["errores_count"])
         err_antes = self.log.errores_count
@@ -408,7 +417,6 @@ class SAPSyncOrchestrator:
             estado=_obtener_estado_paso(self.log, err_antes),
         )
 
-        # Paso 2
         self.log.verificar_cancelacion()
         self.log.refresh_from_db(fields=["errores_count"])
         err_antes = self.log.errores_count
@@ -420,7 +428,6 @@ class SAPSyncOrchestrator:
             estado=_obtener_estado_paso(self.log, err_antes),
         )
 
-        # Paso 3
         self.log.verificar_cancelacion()
         self.log.refresh_from_db(fields=["errores_count"])
         err_antes = self.log.errores_count
@@ -437,7 +444,6 @@ class SAPSyncOrchestrator:
             estado=_obtener_estado_paso(self.log, err_antes),
         )
 
-        # Paso 4
         self.log.verificar_cancelacion()
         self.log.refresh_from_db(fields=["errores_count"])
         err_antes = self.log.errores_count
@@ -450,7 +456,6 @@ class SAPSyncOrchestrator:
             estado=_obtener_estado_paso(self.log, err_antes),
         )
 
-        # Paso 5
         self.log.verificar_cancelacion()
         self.log.refresh_from_db(fields=["errores_count"])
         err_antes = self.log.errores_count
@@ -464,7 +469,6 @@ class SAPSyncOrchestrator:
             estado=_obtener_estado_paso(self.log, err_antes),
         )
 
-        # Paso 6
         self.log.verificar_cancelacion()
         self.log.refresh_from_db(fields=["errores_count"])
         err_antes = self.log.errores_count
@@ -479,7 +483,6 @@ class SAPSyncOrchestrator:
             estado=_obtener_estado_paso(self.log, err_antes),
         )
 
-        # Paso 7
         self.log.verificar_cancelacion()
         self.log.refresh_from_db(fields=["errores_count"])
         err_antes = self.log.errores_count
@@ -493,7 +496,6 @@ class SAPSyncOrchestrator:
             estado=_obtener_estado_paso(self.log, err_antes),
         )
 
-        # Paso 8
         self.log.verificar_cancelacion()
         self.paso8_calculo_disponibilidad(fecha_inicio, fecha_fin)
 
@@ -1055,7 +1057,6 @@ class SAPSyncOrchestrator:
             cuentas_conf.filter(tipo="COMISION").values_list("cuenta", flat=True)
         )
 
-        # ⚡ CARGAMOS EL MAPEO DE GASTOS DESDE LA BD
         from core.models import ClasificacionGasto
 
         mapeo_gastos = dict(
@@ -1127,17 +1128,20 @@ class SAPSyncOrchestrator:
             .distinct()
         )
         augbl_set = set(augbl_list)
+        documentos_con_augbls = PartidaPosicion.objects.filter(
+            augbl__in=augbl_set
+        ).values_list("partida__belnr", flat=True)
 
         zps_belnrs = set(
             Partida.objects.filter(blart="ZP")
             .filter(
                 Q(budat__gte=fecha_inicio, budat__lte=fecha_fin)
                 | Q(belnr__in=augbl_set)
+                | Q(belnr__in=documentos_con_augbls)
             )
             .values_list("belnr", flat=True)
         )
 
-        # ⚡ CORRECCIÓN: Extraemos los AUGBL de todos los pagos (ZPs)
         augbls_de_zps = set(
             PartidaPosicion.objects.filter(partida__belnr__in=zps_belnrs)
             .exclude(augbl="")
@@ -1145,7 +1149,6 @@ class SAPSyncOrchestrator:
             .values_list("augbl", flat=True)
         )
 
-        # ⚡ CORRECCIÓN: Buscamos los documentos de banco que compartan ese AUGBL
         zrs_zh_relacionados = set(
             PartidaPosicion.objects.filter(
                 Q(augbl__in=augbls_de_zps) | Q(partida__belnr__in=augbls_de_zps),
@@ -1185,6 +1188,7 @@ class SAPSyncOrchestrator:
                 "augbl",
                 "zuonr",
                 "koart",
+                "drcrk",  # Aseguramos tener el drcrk para standalone
             )
             .iterator(chunk_size=10_000)
         )
@@ -1198,11 +1202,16 @@ class SAPSyncOrchestrator:
             if pos.ractt in cuentas_reales:
                 mapa_banco_real[pos.partida.belnr] = pos.ractt
 
-            # ⚡ REGLA DE ORO: Registramos qué documentos tocaron el banco
             if pos.ractt in cuentas_todas or pos.ractt in cuentas_reales:
                 documentos_con_banco.add(pos.partida.belnr)
 
             todas_posiciones.append(pos)
+
+        # ⚡ DESCUBRIMIENTO DINÁMICO DE STANDALONES
+        cuentas_cero_del_periodo = {
+            pos.ractt for pos in todas_posiciones if str(pos.ractt).endswith("0")
+        }
+        cuentas_standalone = descubrir_cuentas_standalone(cuentas_cero_del_periodo)
 
         operaciones_internas, todas_posiciones = procesar_transferencias_y_divisas(
             todas_posiciones, cuentas_todas | cuentas_reales, set_dif_cambio
@@ -1230,10 +1239,17 @@ class SAPSyncOrchestrator:
 
             elif belnr_doc in zrs_zh_relacionados or (
                 pos.partida.blart in ("ZR", "ZH", "XX")
-                and cuenta_str in cuentas_egresos
             ):
                 if cuenta_str in cuentas_todas:
-                    balde_solo_zrs.append(pos)
+                    if cuenta_str.endswith("0") and pos.drcrk == "S":
+                        partidas_restantes.append(pos)
+                    elif cuenta_str in cuentas_egresos:
+                        balde_solo_zrs.append(pos)
+                    else:
+                        partidas_restantes.append(pos)
+                else:
+                    # ⚡ NUEVO: Si no es cuenta de banco, es una LÍNEA DE GASTO dentro del propio ZR.
+                    facturas_agrupadas[belnr_doc].append(pos)
 
             elif belnr_doc in facturas_pagadas_por_zp or (
                 pos.augbl and pos.augbl in zps_belnrs
@@ -1241,7 +1257,13 @@ class SAPSyncOrchestrator:
                 if pos.augbl and pos.augbl in zps_belnrs:
                     mapa_factura_zp[belnr_doc] = pos.augbl
                 facturas_agrupadas[belnr_doc].append(pos)
+
             else:
+                # ⚡ NUEVO: Si está compensado por un grupo bancario (sin ZP), lo guardamos para el ZR.
+                if pos.augbl and pos.augbl in augbl_set:
+                    facturas_agrupadas[pos.augbl].append(pos)
+
+                # Siempre a restantes para que el módulo de ingresos lo pueda evaluar
                 partidas_restantes.append(pos)
 
         for belnr_factura, posiciones_factura in facturas_agrupadas.items():
@@ -1257,6 +1279,7 @@ class SAPSyncOrchestrator:
                     if not p.augbl:
                         p.augbl = doc_pago_zp
 
+        # ⚡ SE INYECTA EL SET DE STANDALONES
         resultados_zr, zps_aud, zrs_aud = conciliar_cadena_zr_zp_facturas(
             balde_solo_zps,
             balde_solo_zrs,
@@ -1264,6 +1287,7 @@ class SAPSyncOrchestrator:
             mapa_factura_zp,
             cuentas_impuestos=set_impuestos,
             cuentas_dif_cambio=set_dif_cambio,
+            cuentas_standalone=cuentas_standalone,
         )
 
         self.log.actualizar_progreso_paso(
@@ -1284,9 +1308,12 @@ class SAPSyncOrchestrator:
                 pos.lifnr = socio.get("lifnr") or ""
                 pos.kunnr = socio.get("kunnr") or ""
 
-        # ⚡ SE PASA EL NUEVO FILTRO PARA LA AUDITORIA
+        # ⚡ SE INYECTA EL SET DE STANDALONES
         ingresos_validados, ingresos_aud = procesar_ingresos_bancarios(
-            partidas_restantes, cuentas_ingresos, documentos_con_banco
+            partidas_restantes,
+            cuentas_ingresos,
+            documentos_con_banco,
+            cuentas_standalone,
         )
 
         objetos_dashboard, objetos_auditoria = [], []
@@ -1298,7 +1325,6 @@ class SAPSyncOrchestrator:
                 else res["documento_pago"]
             )
 
-            # ⚡ APLICAMOS EL MAPEO DE GASTOS DINÁMICO
             cat_gasto = mapeo_gastos.get(
                 res["cuenta_gasto"], "OTROS GASTOS (Falta Mapear)"
             )

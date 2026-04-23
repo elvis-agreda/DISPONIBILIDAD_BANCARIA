@@ -2,7 +2,9 @@
 from collections import defaultdict
 
 
-def procesar_ingresos_bancarios(posiciones, cuentas_ingreso, documentos_con_banco):
+def procesar_ingresos_bancarios(
+    posiciones, cuentas_ingreso, documentos_con_banco, cuentas_standalone
+):
     validados = []
     auditoria = []
 
@@ -10,9 +12,16 @@ def procesar_ingresos_bancarios(posiciones, cuentas_ingreso, documentos_con_banc
     zrs_banco = []
     pagos_originales = []
 
-    # Afecta a TODOS los ingresos, no solo cobranzas
     for pos in posiciones:
         if pos.ractt not in cuentas_ingreso:
+            continue
+
+        # ⚡ PROTECCIÓN PARA CUENTAS REALES
+        if str(pos.ractt).endswith("0") and str(pos.ractt) not in cuentas_standalone:
+            continue
+
+        # ⚡ DESCARTAMOS EGRESOS EN CUENTAS STANDALONE ('H' = Haber/Egreso)
+        if str(pos.ractt).endswith("0") and pos.drcrk == "H":
             continue
 
         # Integrado: "XX" como documento de banco junto a ZR y ZH
@@ -148,7 +157,7 @@ def procesar_ingresos_bancarios(posiciones, cuentas_ingreso, documentos_con_banc
         else:
             sub_cat = "OTROS INGRESOS"
 
-        # ⚡ SIEMPRE ABSOLUTO: Ya no hay positivos/negativos falsos aquí
+        # SIEMPRE ABSOLUTO
         monto_final = abs(float(zr.wsl))
 
         docs_sec = ", ".join(set([p.partida.belnr for p in relacionados]))
@@ -174,7 +183,7 @@ def procesar_ingresos_bancarios(posiciones, cuentas_ingreso, documentos_con_banc
             }
         )
 
-    # 4. Pagos "En Tránsito" (Agrupados y Filtrados)
+    # 4. Pagos "En Tránsito"
     pagos_en_transito_agrupados = defaultdict(list)
 
     for p in pagos_originales:
@@ -190,14 +199,11 @@ def procesar_ingresos_bancarios(posiciones, cuentas_ingreso, documentos_con_banc
             pagos_en_transito_agrupados[p.partida.belnr].append(p)
 
     for belnr, posiciones_doc in pagos_en_transito_agrupados.items():
-        # ⚡ REGLA DE ORO: Si el documento no tocó el banco, se descarta por completo
         if belnr not in documentos_con_banco:
             continue
 
-        # Sumamos los montos de todas las líneas de este documento
         monto_neto = sum(float(p.wsl) for p in posiciones_doc)
 
-        # Si la suma da cero, desaparece del Dashboard
         if abs(monto_neto) < 0.01:
             continue
 

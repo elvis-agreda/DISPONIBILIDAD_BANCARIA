@@ -15,6 +15,7 @@ def conciliar_cadena_zr_zp_facturas(
     mapa_factura_zp: dict,
     cuentas_impuestos: set,
     cuentas_dif_cambio: set,
+    cuentas_standalone: set,  # ⚡ NUEVO PARÁMETRO
 ) -> tuple[list, list, list]:
 
     resultados = []
@@ -24,10 +25,14 @@ def conciliar_cadena_zr_zp_facturas(
     # --- MAPAS DE MEMORIA O(1) ---
     mapa_zps_por_augbl = defaultdict(list)
     mapa_zps_por_belnr = {}
+    mapa_zps_por_zuonr = defaultdict(list)  # ⚡ NUEVO MAPA
+
     for zp in balde_solo_zps:
         mapa_zps_por_belnr[zp.partida.belnr] = zp
         if zp.augbl:
             mapa_zps_por_augbl[zp.augbl].append(zp)
+        if zp.zuonr:  # Guardar referencia de cruce
+            mapa_zps_por_zuonr[zp.zuonr].append(zp)
 
     mapa_facturas_por_zp = defaultdict(set)
     for f_belnr, f_posiciones in facturas_agrupadas.items():
@@ -38,37 +43,70 @@ def conciliar_cadena_zr_zp_facturas(
             if p.augbl:
                 mapa_facturas_por_zp[p.augbl].add(f_belnr)
 
-    # ⚡ NUEVA LÓGICA: PRE-EMPAREJAMIENTO INTELIGENTE (1 a 1 y N a 1)
+    # ⚡ NUEVA LÓGICA: PRE-EMPAREJAMIENTO INTELIGENTE (1:1, N:1, 1:M, N:M)
     mapa_zr_a_zps = defaultdict(list)
     zrs_agrupados = defaultdict(list)
 
     # 1. Agrupamos por el AUGBL del ZR (o por su propio belnr si no tiene)
     for zr in balde_solo_zrs:
+        # Por seguridad, ignoramos si se coló un ingreso (Debe 'S') en cuenta "0"
+        if str(zr.ractt).endswith("0") and zr.drcrk == "S":
+            continue
+
         clave_grupo = zr.augbl if zr.augbl else zr.partida.belnr
         zrs_agrupados[clave_grupo].append(zr)
 
     for clave, zrs_grupo in zrs_agrupados.items():
-        # 2. Rescatamos todos los ZPs que compartan ese mismo AUGBL
         zps_grupo = list(mapa_zps_por_augbl.get(clave, []))
 
+        # ⚡ BÚSQUEDA AGRESIVA (N A M STANDALONE Y REFERENCIAS CRUZADAS)
         if clave in mapa_zps_por_belnr and mapa_zps_por_belnr[clave] not in zps_grupo:
             zps_grupo.append(mapa_zps_por_belnr[clave])
 
-        # 3. Y rescatamos ZPs cuyo AUGBL apunte directamente al BELNR del ZR
         for zr in zrs_grupo:
+            # 1. ZP cuyo AUGBL es el BELNR del banco
             for zp_huerfano in mapa_zps_por_augbl.get(zr.partida.belnr, []):
                 if zp_huerfano not in zps_grupo:
                     zps_grupo.append(zp_huerfano)
+
+            # 2. Rescate bidireccional por Asignación (ZUONR)
+            if zr.zuonr:
+                for zp_ref in mapa_zps_por_zuonr.get(zr.zuonr, []):
+                    if zp_ref not in zps_grupo:
+                        zps_grupo.append(zp_ref)
+
+                # Si el analista tipeó el número del ZP directo en el ZUONR del banco
+                if zr.zuonr in mapa_zps_por_belnr:
+                    zp_ref = mapa_zps_por_belnr[zr.zuonr]
+                    if zp_ref not in zps_grupo:
+                        zps_grupo.append(zp_ref)
+
+            # 3. Si el analista tipeó el número del banco directo en el ZUONR del ZP
+            for zp_ref in mapa_zps_por_zuonr.get(zr.partida.belnr, []):
+                if zp_ref not in zps_grupo:
+                    zps_grupo.append(zp_ref)
 
         if not zps_grupo:
             for zr in zrs_grupo:
                 mapa_zr_a_zps[zr.id] = []
             continue
 
+        # ⚡ CONFIANZA CIEGA EN SAP (N A M SUPERIOR)
+        # Verificamos si la intención del analista fue agruparlos
+        es_grupo_compensado = any(zr.augbl == clave for zr in zrs_grupo) and (
+            any(zp.augbl == clave for zp in zps_grupo)
+            or any(zp.partida.belnr == clave for zp in zps_grupo)
+        )
+
+        if es_grupo_compensado:
+            for zr in zrs_grupo:
+                mapa_zr_a_zps[zr.id] = list(zps_grupo)
+            continue
+
         zrs_restantes = list(zrs_grupo)
         zps_restantes = list(zps_grupo)
 
-        # 1. Búsqueda de parejas exactas (1 a 1) con tolerancia ampliada (10%)
+        # ⚡ 1. Búsqueda de parejas exactas (1 a 1)
         for zr in list(zrs_restantes):
             monto_zr = abs(float(zr.wsl))
             mejor_zp = None
@@ -80,17 +118,15 @@ def conciliar_cadena_zr_zp_facturas(
                     menor_dif = dif
                     mejor_zp = zp
 
-            # ⚡ Tolerancia del 10% para absorber comisiones directas en USD
             if mejor_zp and menor_dif <= (monto_zr * 0.10):
                 mapa_zr_a_zps[zr.id] = [mejor_zp]
                 zps_restantes.remove(mejor_zp)
                 zrs_restantes.remove(zr)
 
-        # 2. Búsqueda de múltiples pagos para una sola factura (N a 1)
+        # ⚡ 2. Búsqueda N a 1 (Varios Bancos ZR pagan 1 solo Pago ZP)
         if zrs_restantes and zps_restantes:
             for zp in list(zps_restantes):
                 monto_zp = abs(float(zp.wsl))
-                # Ordenar los pagos de mayor a menor para calzar mejor
                 zrs_restantes.sort(key=lambda x: abs(float(x.wsl)), reverse=True)
 
                 suma_temp = 0.0
@@ -99,26 +135,57 @@ def conciliar_cadena_zr_zp_facturas(
                     suma_temp += abs(float(zr.wsl))
                     zrs_usados.append(zr)
 
-                    # ⚡ Tolerancia del 10%
                     if abs(monto_zp - suma_temp) <= (monto_zp * 0.10):
-                        # ¡Bingo! Estos ZRs sumados pagan este ZP
                         for zr_usado in zrs_usados:
                             mapa_zr_a_zps[zr_usado.id] = [zp]
                             zrs_restantes.remove(zr_usado)
                         zps_restantes.remove(zp)
                         break
 
-        # 3. Fallback: Lo que sobre se reparte entre los ZPs que quedaron
+        # ⚡ 3. Búsqueda 1 a M (1 solo Banco ZR paga Varios Pagos ZP)
+        if zrs_restantes and zps_restantes:
+            for zr in list(zrs_restantes):
+                monto_zr = abs(float(zr.wsl))
+                zps_restantes.sort(key=lambda x: abs(float(x.wsl)), reverse=True)
+
+                suma_temp = 0.0
+                zps_usados = []
+                for zp in zps_restantes:
+                    suma_temp += abs(float(zp.wsl))
+                    zps_usados.append(zp)
+
+                    if abs(monto_zr - suma_temp) <= (monto_zr * 0.10):
+                        mapa_zr_a_zps[zr.id] = list(zps_usados)
+                        for zp_usado in zps_usados:
+                            zps_restantes.remove(zp_usado)
+                        zrs_restantes.remove(zr)
+                        break
+
+        # ⚡ 4. Búsqueda N a M (Bloque de compensación cruzada)
+        if zrs_restantes and zps_restantes:
+            suma_zrs = sum(abs(float(zr.wsl)) for zr in zrs_restantes)
+            suma_zps = sum(abs(float(zp.wsl)) for zp in zps_restantes)
+
+            comparten_augbl = any(zr.augbl for zr in zrs_restantes) and any(
+                zp.augbl for zp in zps_restantes
+            )
+
+            if (
+                abs(suma_zrs - suma_zps) <= (max(suma_zrs, suma_zps) * 0.10)
+                or comparten_augbl
+            ):
+                for zr in zrs_restantes:
+                    mapa_zr_a_zps[zr.id] = list(zps_restantes)
+                zrs_restantes.clear()
+                zps_restantes.clear()
+
+        # 5. Fallback: Recolector de huérfanos residuales
         if zrs_restantes:
             for zr in zrs_restantes:
                 mapa_zr_a_zps[zr.id] = zps_restantes if zps_restantes else zps_grupo
         elif zps_restantes and zrs_grupo:
-            # ⚡ NUEVO: Barredora de huérfanos.
-            # Si sobraron ZPs pequeños (como el de 1,15) pero ya no hay ZRs libres,
-            # se los inyectamos al movimiento de banco más grande del grupo para no perderlos.
             zr_mayor = max(zrs_grupo, key=lambda x: abs(float(x.wsl)))
             if zr_mayor.id in mapa_zr_a_zps:
-                # Evitar duplicados por si acaso
                 para_agregar = [
                     zp for zp in zps_restantes if zp not in mapa_zr_a_zps[zr_mayor.id]
                 ]
@@ -127,10 +194,84 @@ def conciliar_cadena_zr_zp_facturas(
     # --- FIN DE PRE-EMPAREJAMIENTO ---
 
     for zr in balde_solo_zrs:
-        # Ahora le preguntamos al mapa pre-calculado a qué ZP(s) pertenece este ZR
         zps_relacionados = mapa_zr_a_zps.get(zr.id, [])
-
         if not zps_relacionados:
+            # ⚡ NUEVA LÓGICA: ZR DIRECTOS / AUTO-COMPENSADOS (Tus ejemplos)
+            # Buscamos si recolectamos líneas de gasto bajo el belnr del ZR o bajo su compensación
+            lineas_directas = facturas_agrupadas.get(zr.partida.belnr, [])
+            if not lineas_directas and zr.augbl:
+                lineas_directas = facturas_agrupadas.get(zr.augbl, [])
+
+            if lineas_directas:
+                monto_total_zr = abs(float(zr.wsl))
+                monto_gastos = 0.0
+                lineas_validas = []
+                proveedor_doc = ""
+
+                for p in lineas_directas:
+                    if p.lifnr or p.kunnr:
+                        proveedor_doc = p.lifnr or p.kunnr
+
+                    if (
+                        p.ractt not in cuentas_impuestos
+                        and p.ractt not in cuentas_dif_cambio
+                        and getattr(p, "koart", "") not in ("K", "D")
+                    ):
+                        lineas_validas.append(p)
+                        monto_gastos += abs(float(p.wsl))
+
+                # Identificamos si hay facturas adicionales involucradas (ej. un KR compensado)
+                facturas_involucradas = {
+                    p.partida.belnr
+                    for p in lineas_directas
+                    if p.partida.belnr != zr.partida.belnr
+                }
+                facturas_str = ", ".join(sorted(list(facturas_involucradas)))
+
+                # Fallback: Si fue un anticipo y no hay gasto directo, usamos la cuenta del proveedor
+                if not lineas_validas:
+                    cuenta_acreedor = "SIN_DETALLE_GASTO"
+                    for p in lineas_directas:
+                        if getattr(p, "koart", "") in ("K", "D"):
+                            cuenta_acreedor = str(p.ractt)
+                            break
+
+                    resultados.append(
+                        _generar_fila_dashboard(
+                            zr=zr,
+                            zp=zr,
+                            monto=monto_total_zr,
+                            cuenta_gasto=cuenta_acreedor,
+                            tipo="EGRESOS",
+                            proveedor=proveedor_doc,
+                            factura=facturas_str,
+                        )
+                    )
+                else:
+                    # Distribuimos el monto del banco proporcionalmente a las líneas de gasto del documento
+                    for p in lineas_validas:
+                        prop = (
+                            abs(float(p.wsl)) / monto_gastos
+                            if monto_gastos > 0
+                            else 1.0 / len(lineas_validas)
+                        )
+                        resultados.append(
+                            _generar_fila_dashboard(
+                                zr=zr,
+                                zp=zr,
+                                monto=monto_total_zr * prop,
+                                cuenta_gasto=p.ractt,
+                                tipo="EGRESOS",
+                                proveedor=proveedor_doc,
+                                factura=facturas_str,
+                            )
+                        )
+                continue
+
+            # ⚡ LÓGICA DE DESCARTE INTELIGENTE
+            if str(zr.ractt).endswith("0") and str(zr.ractt) not in cuentas_standalone:
+                continue
+
             zrs_auditoria.append(zr)
             continue
 
@@ -142,7 +283,7 @@ def conciliar_cadena_zr_zp_facturas(
 
         resultados_crudos = []
 
-        # ⚡ CASCADA NIVEL 1: Reparto de Banco (ZR) hacia Pago (ZP)
+        # ⚡ CASCADA NIVEL 1
         for zp in zps_relacionados:
             if total_zps_monto > 0:
                 proporcion_zp = abs(float(zp.wsl)) / total_zps_monto
@@ -166,7 +307,6 @@ def conciliar_cadena_zr_zp_facturas(
                 )
 
                 cuenta_gasto = linea_prov if linea_prov else "SIN_DETALLE_GASTO"
-                # --------------------
 
                 resultados_crudos.append(
                     {
@@ -179,17 +319,15 @@ def conciliar_cadena_zr_zp_facturas(
                 )
                 continue
 
-            # ⚡ CASCADA NIVEL 2: Aislamiento absoluto de Facturas y Proveedores
+            # ⚡ CASCADA NIVEL 2
             datos_facturas = {}
             suma_gastos_todas_facturas_zp = 0.0
 
             for f_id in facturas_ids:
-                # Agrupar las líneas de esta factura por proveedor
                 lineas_por_prov = defaultdict(list)
                 monto_por_prov = defaultdict(float)
                 proveedores_en_doc = set()
 
-                # 1. Identificar proveedores y asociar líneas de gasto a cada uno
                 for p in facturas_agrupadas[f_id]:
                     prov = p.lifnr or p.kunnr or ""
                     if getattr(p, "koart", "") in ("K", "D"):
@@ -207,16 +345,13 @@ def conciliar_cadena_zr_zp_facturas(
                         )
                         monto_por_prov[prov] += monto_gasto
 
-                # 2. Manejo de líneas huérfanas (sin proveedor explícito en la línea)
                 if "" in lineas_por_prov and len(proveedores_en_doc) == 1:
-                    # Si hay un solo proveedor, le asignamos las líneas huérfanas
                     unico_prov = list(proveedores_en_doc)[0]
                     lineas_por_prov[unico_prov].extend(lineas_por_prov[""])
                     monto_por_prov[unico_prov] += monto_por_prov[""]
                     del lineas_por_prov[""]
                     del monto_por_prov[""]
                 elif "" in lineas_por_prov and len(proveedores_en_doc) > 1:
-                    # Si hay varios proveedores, repartimos las líneas huérfanas equitativamente
                     lineas_huerfanas = lineas_por_prov.pop("")
                     for lh in lineas_huerfanas:
                         monto_dividido = lh["monto"] / len(proveedores_en_doc)
@@ -227,15 +362,11 @@ def conciliar_cadena_zr_zp_facturas(
                             monto_por_prov[prov] += monto_dividido
                     del monto_por_prov[""]
 
-                # 3. Fallback: Si un proveedor se quedó sin líneas de gasto, usar la cuenta del acreedor
                 for prov in proveedores_en_doc:
                     if prov not in lineas_por_prov or not lineas_por_prov[prov]:
                         monto_dummy = 0.0
-                        cuenta_acreedor = (
-                            "CUENTA_CONTABLE_ND"  # Valor por defecto extremo
-                        )
+                        cuenta_acreedor = "CUENTA_CONTABLE_ND"
 
-                        # Buscar la línea original del acreedor/proveedor para heredar su cuenta real
                         for p in facturas_agrupadas[f_id]:
                             if getattr(p, "koart", "") in ("K", "D") and (
                                 p.lifnr == prov or p.kunnr == prov
@@ -249,10 +380,9 @@ def conciliar_cadena_zr_zp_facturas(
                         )
                         monto_por_prov[prov] += monto_dummy
 
-                # 4. Consolidar la data aislada
                 for prov, lineas in lineas_por_prov.items():
                     if not prov and proveedores_en_doc:
-                        continue  # Ignorar huérfanos si ya se procesaron
+                        continue
 
                     llave_dt = f"{f_id}_{prov}"
                     datos_facturas[llave_dt] = {
@@ -263,7 +393,7 @@ def conciliar_cadena_zr_zp_facturas(
                     }
                     suma_gastos_todas_facturas_zp += monto_por_prov[prov]
 
-            # ⚡ CASCADA NIVEL 3: Distribuir a la Factura y luego a sus Propias Cuentas
+            # ⚡ CASCADA NIVEL 3
             for f_llave, f_data in datos_facturas.items():
                 if suma_gastos_todas_facturas_zp > 0:
                     proporcion_factura = (
@@ -277,7 +407,6 @@ def conciliar_cadena_zr_zp_facturas(
                 if monto_zr_para_factura <= 0:
                     continue
 
-                # Distribuir estrictamente dentro del contenedor de ESTA factura y ESTE proveedor
                 for linea in f_data["lineas"]:
                     if f_data["suma_gastos"] > 0:
                         proporcion_cuenta = linea["monto"] / f_data["suma_gastos"]
@@ -296,7 +425,6 @@ def conciliar_cadena_zr_zp_facturas(
                         }
                     )
 
-        # ⚡ AGRUPACIÓN ESTÉTICA: Unimos líneas idénticas para no ensuciar el Dashboard
         agrupados = {}
         for r in resultados_crudos:
             llave = (r["zp"].id, r["cuenta"], r["prov"])

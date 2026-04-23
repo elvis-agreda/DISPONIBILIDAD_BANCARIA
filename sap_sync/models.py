@@ -337,7 +337,7 @@ class CuentaConfiguracion(models.Model):
         verbose_name_plural = "Configuración de Cuentas"
 
     def __str__(self):
-        return f"{self.cuenta} - {self.get_tipo_display()}"
+        return f"{self.cuenta} - {self.get_tipo_display()}"  # type: ignore
 
 
 class MapeoCampo(models.Model):
