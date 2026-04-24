@@ -1243,7 +1243,10 @@ class SAPSyncOrchestrator:
                 if cuenta_str in cuentas_todas:
                     if cuenta_str.endswith("0") and pos.drcrk == "S":
                         partidas_restantes.append(pos)
-                    elif cuenta_str in cuentas_egresos:
+                    # ⚡ FIX: Forzamos a que si termina en 0 y es "H" (Egreso), vaya al balde correcto
+                    elif cuenta_str in cuentas_egresos or (
+                        cuenta_str.endswith("0") and pos.drcrk == "H"
+                    ):
                         balde_solo_zrs.append(pos)
                     else:
                         partidas_restantes.append(pos)

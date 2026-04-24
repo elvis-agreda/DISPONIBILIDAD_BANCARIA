@@ -133,12 +133,9 @@ HUEY = {
     "name": "sap_worker_queue",
     "filename": os.path.join(BASE_DIR, "huey_tasks.sqlite3"),
     "immediate": False,
-    "results": True,
-    "store_none": False,
     "consumer": {
         "workers": 4,
         "worker_type": "thread",
-        "periodic": True,
     },
 }
 

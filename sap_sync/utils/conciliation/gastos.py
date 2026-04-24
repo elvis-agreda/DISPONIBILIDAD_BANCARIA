@@ -24,11 +24,11 @@ def conciliar_cadena_zr_zp_facturas(
 
     # --- MAPAS DE MEMORIA O(1) ---
     mapa_zps_por_augbl = defaultdict(list)
-    mapa_zps_por_belnr = {}
-    mapa_zps_por_zuonr = defaultdict(list)  # ⚡ NUEVO MAPA
+    mapa_zps_por_belnr = defaultdict(list)
+    mapa_zps_por_zuonr = defaultdict(list)
 
     for zp in balde_solo_zps:
-        mapa_zps_por_belnr[zp.partida.belnr] = zp
+        mapa_zps_por_belnr[zp.partida.belnr].append(zp)
         if zp.augbl:
             mapa_zps_por_augbl[zp.augbl].append(zp)
         if zp.zuonr:  # Guardar referencia de cruce
@@ -60,8 +60,9 @@ def conciliar_cadena_zr_zp_facturas(
         zps_grupo = list(mapa_zps_por_augbl.get(clave, []))
 
         # ⚡ BÚSQUEDA AGRESIVA (N A M STANDALONE Y REFERENCIAS CRUZADAS)
-        if clave in mapa_zps_por_belnr and mapa_zps_por_belnr[clave] not in zps_grupo:
-            zps_grupo.append(mapa_zps_por_belnr[clave])
+        for zp_ref in mapa_zps_por_belnr.get(clave, []):
+            if zp_ref not in zps_grupo:
+                zps_grupo.append(zp_ref)
 
         for zr in zrs_grupo:
             # 1. ZP cuyo AUGBL es el BELNR del banco
@@ -76,8 +77,7 @@ def conciliar_cadena_zr_zp_facturas(
                         zps_grupo.append(zp_ref)
 
                 # Si el analista tipeó el número del ZP directo en el ZUONR del banco
-                if zr.zuonr in mapa_zps_por_belnr:
-                    zp_ref = mapa_zps_por_belnr[zr.zuonr]
+                for zp_ref in mapa_zps_por_belnr.get(zr.zuonr, []):
                     if zp_ref not in zps_grupo:
                         zps_grupo.append(zp_ref)
 
@@ -192,15 +192,85 @@ def conciliar_cadena_zr_zp_facturas(
                 mapa_zr_a_zps[zr_mayor.id].extend(para_agregar)
 
     # --- FIN DE PRE-EMPAREJAMIENTO ---
+    # ⚡ 6. RESCATE GLOBAL DE HUÉRFANOS POR MONTO (LA RED DE SEGURIDAD)
+    # Atrapa a los ZR y ZP que no se unieron antes porque no compartían
+    # ninguna referencia de texto (augbl, zuonr, etc).
 
+    zps_asignados_ids = set()
+    for zps_list in mapa_zr_a_zps.values():
+        for zp_asig in zps_list:
+            zps_asignados_ids.add(zp_asig.id)
+
+    zrs_huerfanos = [zr for zr in balde_solo_zrs if not mapa_zr_a_zps.get(zr.id)]
+    zps_huerfanos = [zp for zp in balde_solo_zps if zp.id not in zps_asignados_ids]
+
+    if zrs_huerfanos and zps_huerfanos:
+        # Rescate 1 a 1 Global
+        for zr in list(zrs_huerfanos):
+            monto_zr = abs(float(zr.wsl))
+            mejor_zp = None
+            menor_dif = float("inf")
+
+            for zp in zps_huerfanos:
+                dif = abs(abs(float(zp.wsl)) - monto_zr)
+                if dif < menor_dif:
+                    menor_dif = dif
+                    mejor_zp = zp
+
+            if mejor_zp and menor_dif <= (monto_zr * 0.10):
+                mapa_zr_a_zps[zr.id] = [mejor_zp]
+                zps_huerfanos.remove(mejor_zp)
+                zrs_huerfanos.remove(zr)
+
+        # Rescate N a 1 Global
+        if zrs_huerfanos and zps_huerfanos:
+            for zp in list(zps_huerfanos):
+                monto_zp = abs(float(zp.wsl))
+                zrs_huerfanos.sort(key=lambda x: abs(float(x.wsl)), reverse=True)
+
+                suma_temp = 0.0
+                zrs_usados = []
+                for zr in zrs_huerfanos:
+                    suma_temp += abs(float(zr.wsl))
+                    zrs_usados.append(zr)
+
+                    if abs(monto_zp - suma_temp) <= (monto_zp * 0.10):
+                        for zr_usado in zrs_usados:
+                            mapa_zr_a_zps[zr_usado.id] = [zp]
+                            zrs_huerfanos.remove(zr_usado)
+                        zps_huerfanos.remove(zp)
+                        break
+
+        # Rescate 1 a M Global
+        if zrs_huerfanos and zps_huerfanos:
+            for zr in list(zrs_huerfanos):
+                monto_zr = abs(float(zr.wsl))
+                zps_huerfanos.sort(key=lambda x: abs(float(x.wsl)), reverse=True)
+
+                suma_temp = 0.0
+                zps_usados = []
+                for zp in zps_huerfanos:
+                    suma_temp += abs(float(zp.wsl))
+                    zps_usados.append(zp)
+
+                    if abs(monto_zr - suma_temp) <= (monto_zr * 0.10):
+                        mapa_zr_a_zps[zr.id] = list(zps_usados)
+                        for zp_usado in zps_usados:
+                            zps_huerfanos.remove(zp_usado)
+                        zrs_huerfanos.remove(zr)
+                        break
     for zr in balde_solo_zrs:
         zps_relacionados = mapa_zr_a_zps.get(zr.id, [])
         if not zps_relacionados:
-            # ⚡ NUEVA LÓGICA: ZR DIRECTOS / AUTO-COMPENSADOS (Tus ejemplos)
-            # Buscamos si recolectamos líneas de gasto bajo el belnr del ZR o bajo su compensación
-            lineas_directas = facturas_agrupadas.get(zr.partida.belnr, [])
+            # ⚡ NUEVA LÓGICA: ZR DIRECTOS / AUTO-COMPENSADOS
+            # Hacemos una copia de la lista para no mutar el diccionario original
+            lineas_directas = list(facturas_agrupadas.get(zr.partida.belnr, []))
+
+            # ⚡ FIX: Buscar facturas que fueron compensadas directamente contra este banco
             if not lineas_directas and zr.augbl:
-                lineas_directas = facturas_agrupadas.get(zr.augbl, [])
+                facturas_directas_ids = mapa_facturas_por_zp.get(zr.augbl, set())
+                for f_id in facturas_directas_ids:
+                    lineas_directas.extend(facturas_agrupadas.get(f_id, []))
 
             if lineas_directas:
                 monto_total_zr = abs(float(zr.wsl))
@@ -220,7 +290,6 @@ def conciliar_cadena_zr_zp_facturas(
                         lineas_validas.append(p)
                         monto_gastos += abs(float(p.wsl))
 
-                # Identificamos si hay facturas adicionales involucradas (ej. un KR compensado)
                 facturas_involucradas = {
                     p.partida.belnr
                     for p in lineas_directas
@@ -228,7 +297,6 @@ def conciliar_cadena_zr_zp_facturas(
                 }
                 facturas_str = ", ".join(sorted(list(facturas_involucradas)))
 
-                # Fallback: Si fue un anticipo y no hay gasto directo, usamos la cuenta del proveedor
                 if not lineas_validas:
                     cuenta_acreedor = "SIN_DETALLE_GASTO"
                     for p in lineas_directas:
@@ -248,7 +316,6 @@ def conciliar_cadena_zr_zp_facturas(
                         )
                     )
                 else:
-                    # Distribuimos el monto del banco proporcionalmente a las líneas de gasto del documento
                     for p in lineas_validas:
                         prop = (
                             abs(float(p.wsl)) / monto_gastos
@@ -272,7 +339,18 @@ def conciliar_cadena_zr_zp_facturas(
             if str(zr.ractt).endswith("0") and str(zr.ractt) not in cuentas_standalone:
                 continue
 
-            zrs_auditoria.append(zr)
+            # ⚡ FIX: TODO LO ABIERTO VA AL DASHBOARD PARA RESTAR DISPONIBILIDAD
+            resultados.append(
+                _generar_fila_dashboard(
+                    zr=zr,
+                    zp=zr,
+                    monto=abs(float(zr.wsl)),
+                    cuenta_gasto="SIN_DETALLE_GASTO",
+                    tipo="EGRESOS",
+                    proveedor="",
+                    factura="",
+                )
+            )
             continue
 
         for zp in zps_relacionados:
@@ -282,7 +360,6 @@ def conciliar_cadena_zr_zp_facturas(
         total_zps_monto = sum(abs(float(zp.wsl)) for zp in zps_relacionados)
 
         resultados_crudos = []
-
         # ⚡ CASCADA NIVEL 1
         for zp in zps_relacionados:
             if total_zps_monto > 0:
@@ -292,10 +369,17 @@ def conciliar_cadena_zr_zp_facturas(
 
             monto_zr_para_zp = monto_total_zr * proporcion_zp
 
-            facturas_ids = mapa_facturas_por_zp.get(zp.partida.belnr, set())
-            facturas_ids = {f for f in facturas_ids if f != zp.partida.belnr}
+            # --- INICIO DEL FIX ---
+            # 1. Recolectar facturas usando el BELNR del ZP y también su AUGBL manual
+            facturas_ids_buscar = set(mapa_facturas_por_zp.get(zp.partida.belnr, []))
+            if zp.augbl:
+                facturas_ids_buscar.update(mapa_facturas_por_zp.get(zp.augbl, []))
 
-            if not facturas_ids:
+            facturas_ids_buscar = {
+                f for f in facturas_ids_buscar if f != zp.partida.belnr
+            }
+
+            if not facturas_ids_buscar:
                 from sap_sync.models import PartidaPosicion
 
                 linea_prov = (
@@ -305,9 +389,33 @@ def conciliar_cadena_zr_zp_facturas(
                     .values_list("ractt", flat=True)
                     .first()
                 )
-
                 cuenta_gasto = linea_prov if linea_prov else "SIN_DETALLE_GASTO"
 
+                resultados_crudos.append(
+                    {
+                        "zp": zp,
+                        "factura": "",
+                        "prov": "",
+                        "cuenta": cuenta_gasto,
+                        "monto": monto_zr_para_zp,
+                    }
+                )
+                continue
+
+            # 2. Recolectar todas las líneas y agruparlas por su VERDADERO número de factura (BELNR)
+            lineas_totales_zp = []
+            for f_id in facturas_ids_buscar:
+                lineas_totales_zp.extend(facturas_agrupadas.get(f_id, []))
+
+            facturas_reales = defaultdict(list)
+            for p in lineas_totales_zp:
+                # Evitamos incluir el propio ZP como si fuera una factura
+                if p.partida.belnr == zp.partida.belnr:
+                    continue
+                facturas_reales[p.partida.belnr].append(p)
+
+            if not facturas_reales:
+                cuenta_gasto = "SIN_DETALLE_GASTO"
                 resultados_crudos.append(
                     {
                         "zp": zp,
@@ -323,12 +431,13 @@ def conciliar_cadena_zr_zp_facturas(
             datos_facturas = {}
             suma_gastos_todas_facturas_zp = 0.0
 
-            for f_id in facturas_ids:
+            # AHORA ITERAMOS SOBRE LAS FACTURAS REALES EN VEZ DE 'f_id'
+            for f_real_belnr, f_posiciones in facturas_reales.items():
                 lineas_por_prov = defaultdict(list)
                 monto_por_prov = defaultdict(float)
                 proveedores_en_doc = set()
 
-                for p in facturas_agrupadas[f_id]:
+                for p in f_posiciones:
                     prov = p.lifnr or p.kunnr or ""
                     if getattr(p, "koart", "") in ("K", "D"):
                         if prov:
@@ -367,7 +476,7 @@ def conciliar_cadena_zr_zp_facturas(
                         monto_dummy = 0.0
                         cuenta_acreedor = "CUENTA_CONTABLE_ND"
 
-                        for p in facturas_agrupadas[f_id]:
+                        for p in f_posiciones:
                             if getattr(p, "koart", "") in ("K", "D") and (
                                 p.lifnr == prov or p.kunnr == prov
                             ):
@@ -384,11 +493,11 @@ def conciliar_cadena_zr_zp_facturas(
                     if not prov and proveedores_en_doc:
                         continue
 
-                    llave_dt = f"{f_id}_{prov}"
+                    llave_dt = f"{f_real_belnr}_{prov}"
                     datos_facturas[llave_dt] = {
-                        "factura_id": f_id,
+                        "factura_id": f_real_belnr,
                         "suma_gastos": monto_por_prov[prov],
-                        "lineas": lineas,
+                        "lineas": lineas_por_prov[prov],
                         "prov": prov,
                     }
                     suma_gastos_todas_facturas_zp += monto_por_prov[prov]
