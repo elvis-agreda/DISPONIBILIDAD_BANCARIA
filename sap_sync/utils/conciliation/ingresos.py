@@ -32,10 +32,10 @@ def procesar_ingresos_bancarios(
 
     # 2. Indexación para cruces rápidos
     mapa_pagos_por_augbl = defaultdict(list)
-    mapa_pagos_por_belnr = {}
+    mapa_pagos_por_belnr = defaultdict(list)
 
     for p in pagos_originales:
-        mapa_pagos_por_belnr[p.partida.belnr] = p
+        mapa_pagos_por_belnr[p.partida.belnr].append(p)
         if p.augbl:
             mapa_pagos_por_augbl[p.augbl].append(p)
 
@@ -50,11 +50,10 @@ def procesar_ingresos_bancarios(
     for clave, zrs_grupo in zrs_agrupados.items():
         pagos_grupo = list(mapa_pagos_por_augbl.get(clave, []))
 
-        if (
-            clave in mapa_pagos_por_belnr
-            and mapa_pagos_por_belnr[clave] not in pagos_grupo
-        ):
-            pagos_grupo.append(mapa_pagos_por_belnr[clave])
+        # ⚡ FIX: Búsqueda agresiva adaptada a listas
+        for pago_ref in mapa_pagos_por_belnr.get(clave, []):
+            if pago_ref not in pagos_grupo:
+                pagos_grupo.append(pago_ref)
 
         for zr in zrs_grupo:
             for pago_huerfano in mapa_pagos_por_augbl.get(zr.partida.belnr, []):
@@ -128,6 +127,55 @@ def procesar_ingresos_bancarios(
         for zr in zrs_restantes:
             mapa_zr_a_pagos[zr.id] = pagos_restantes if pagos_restantes else pagos_grupo
 
+    # ⚡ 5. RESCATE GLOBAL DE HUÉRFANOS POR MONTO (LA RED DE SEGURIDAD)
+    pagos_asignados_ids = set()
+    for pagos_list in mapa_zr_a_pagos.values():
+        for p_asig in pagos_list:
+            pagos_asignados_ids.add(p_asig.id)
+
+    zrs_huerfanos = [
+        zr for zr in zrs_banco if not mapa_zr_a_pagos.get(zr.id) and not zr.augbl
+    ]
+    pagos_huerfanos = [
+        p for p in pagos_originales if p.id not in pagos_asignados_ids and not p.augbl
+    ]
+
+    if zrs_huerfanos and pagos_huerfanos:
+        # Rescate 1 a 1 Global
+        for zr in list(zrs_huerfanos):
+            monto_zr = abs(float(zr.wsl))
+            mejor_pago = None
+            menor_dif = float("inf")
+
+            for p in pagos_huerfanos:
+                dif = abs(abs(float(p.wsl)) - monto_zr)
+                if dif < menor_dif:
+                    menor_dif = dif
+                    mejor_pago = p
+
+            if mejor_pago and menor_dif <= (monto_zr * 0.05):
+                mapa_zr_a_pagos[zr.id] = [mejor_pago]
+                pagos_huerfanos.remove(mejor_pago)
+                zrs_huerfanos.remove(zr)
+
+        # Rescate N a 1 Global
+        if zrs_huerfanos and pagos_huerfanos:
+            for p in list(pagos_huerfanos):
+                monto_pago = abs(float(p.wsl))
+                zrs_huerfanos.sort(key=lambda x: abs(float(x.wsl)), reverse=True)
+
+                suma_temp = 0.0
+                zrs_usados = []
+                for zr in zrs_huerfanos:
+                    suma_temp += abs(float(zr.wsl))
+                    zrs_usados.append(zr)
+
+                    if abs(monto_pago - suma_temp) <= (monto_pago * 0.05):
+                        for zr_usado in zrs_usados:
+                            mapa_zr_a_pagos[zr_usado.id] = [p]
+                            zrs_huerfanos.remove(zr_usado)
+                        pagos_huerfanos.remove(p)
+                        break
     # --- FIN DE PRE-EMPAREJAMIENTO ---
 
     procesados_ids = set()

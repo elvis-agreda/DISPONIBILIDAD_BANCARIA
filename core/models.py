@@ -182,8 +182,11 @@ class ClasificacionGasto(models.Model):
     cuenta_gasto = models.CharField(
         "Cuenta de Gasto (Ej. 511010114)", max_length=20, unique=True
     )
-    clasificacion = models.CharField(
-        "Nombre en Dashboard (Ej. Nómina Empleados)", max_length=100
+    categoria = models.CharField(
+        "Categoría Principal (Ej. Gastos Operativos)", max_length=100
+    )
+    sub_categoria = models.CharField(
+        "Sub-Categoría (Ej. Servicios de IT)", max_length=100
     )
 
     class Meta:
@@ -191,7 +194,7 @@ class ClasificacionGasto(models.Model):
         verbose_name_plural = "Mapeos de Gastos"
 
     def __str__(self):
-        return f"{self.cuenta_gasto} - {self.clasificacion}"
+        return f"{self.cuenta_gasto} | {self.categoria} > {self.sub_categoria}"
 
 
 class Notificacion(models.Model):

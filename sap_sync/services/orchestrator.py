@@ -11,6 +11,7 @@ from django.utils import timezone
 # --- MODELOS DE CORE ---
 from core.models import (
     AsientoAuditoria,
+    ClasificacionGasto,
     DashboardConsolidado,
     SaldoBancario,
 )
@@ -1057,11 +1058,9 @@ class SAPSyncOrchestrator:
             cuentas_conf.filter(tipo="COMISION").values_list("cuenta", flat=True)
         )
 
-        from core.models import ClasificacionGasto
-
-        mapeo_gastos = dict(
-            ClasificacionGasto.objects.values_list("cuenta_gasto", "clasificacion")
-        )
+        mapeo_gastos = {
+            obj.cuenta_gasto: obj for obj in ClasificacionGasto.objects.all()
+        }
 
         hkonts_saldos = set(
             SaldoBancario.objects.values_list("hkont", flat=True).distinct()
@@ -1291,6 +1290,7 @@ class SAPSyncOrchestrator:
             cuentas_impuestos=set_impuestos,
             cuentas_dif_cambio=set_dif_cambio,
             cuentas_standalone=cuentas_standalone,
+            cuentas_bancarias=cuentas_todas,
         )
 
         self.log.actualizar_progreso_paso(
@@ -1328,15 +1328,17 @@ class SAPSyncOrchestrator:
                 else res["documento_pago"]
             )
 
-            cat_gasto = mapeo_gastos.get(
-                res["cuenta_gasto"], "OTROS GASTOS (Falta Mapear)"
+            mapeo_obj = mapeo_gastos.get(res["cuenta_gasto"])
+            cat_gasto = (
+                mapeo_obj.categoria if mapeo_obj else "OTROS GASTOS (No Mapeados)"
             )
+            sub_cat_gasto = mapeo_obj.sub_categoria if mapeo_obj else "Sin clasificar"
 
             objetos_dashboard.append(
                 DashboardConsolidado(
                     tipo_operacion="EGRESOS",
                     categoria=cat_gasto,
-                    sub_categoria="PROPUESTA_PAGO",
+                    sub_categoria=sub_cat_gasto,
                     cuenta_contable=res["cuenta_banco"],
                     cuenta_gasto=res["cuenta_gasto"],
                     lifnr=res["proveedor"],
