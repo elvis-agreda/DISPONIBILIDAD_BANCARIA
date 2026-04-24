@@ -15,12 +15,12 @@ def rastrear_cadena_completa(
     facturas_agrupadas,
     cuentas_impuestos,
     cuentas_dif_cambio,
-    cuentas_bancarias,  # ⚡ NUEVO CORTAFUEGOS
-    max_depth=2,  # ⚡ LÍMITE REDUCIDO A 2 PARA EVITAR CONGELAMIENTO
+    cuentas_bancarias,
+    max_depth=4,  # ⚡ AUMENTADO A 4 SALTOS PARA ASEGURAR COMPENSACIONES LARGAS
 ):
     """
-    Viaja recursivamente por la telaraña de compensaciones de SAP, pero con
-    un límite estricto de profundidad y sanitización de strings.
+    Viaja recursivamente por la telaraña de compensaciones de SAP.
+    Devuelve tanto los documentos (belnr) como las compensaciones (augbl) encontradas.
     """
     visitados_belnr = set()
     visitados_augbl = set()
@@ -28,7 +28,6 @@ def rastrear_cadena_completa(
     por_visitar_augbl = set(semillas_augbl)
     profundidad = 0
 
-    # ⚡ SANITIZACIÓN EXTREMA: Quitar ceros a la izquierda para garantizar el bloqueo
     impuestos_str = {str(c).lstrip("0") for c in cuentas_impuestos if c}
     dif_cambio_str = {str(c).lstrip("0") for c in cuentas_dif_cambio if c}
     bancos_str = {str(c).lstrip("0") for c in cuentas_bancarias if c}
@@ -50,10 +49,7 @@ def rastrear_cadena_completa(
             if belnr and belnr not in visitados_belnr:
                 visitados_belnr.add(belnr)
                 for p in facturas_agrupadas.get(belnr, []):
-                    # ⚡ FIX: Sanitizar la cuenta de la línea actual
                     cuenta_str = str(p.ractt).lstrip("0")
-
-                    # ⚡ CORTAFUEGOS TOTAL: Si es impuesto, dif. cambio o banco, NO seguimos
                     if (
                         cuenta_str in impuestos_str
                         or cuenta_str in dif_cambio_str
@@ -66,7 +62,7 @@ def rastrear_cadena_completa(
 
         profundidad += 1
 
-    return visitados_belnr
+    return visitados_belnr, visitados_augbl  # ⚡ AHORA DEVUELVE AMBOS
 
 
 def conciliar_cadena_zr_zp_facturas(
@@ -112,7 +108,6 @@ def conciliar_cadena_zr_zp_facturas(
     for zr in balde_solo_zrs:
         if str(zr.ractt).endswith("0") and zr.drcrk == "S":
             continue
-
         clave_grupo = zr.augbl if zr.augbl else zr.partida.belnr
         zrs_agrupados[clave_grupo].append(zr)
 
@@ -124,22 +119,41 @@ def conciliar_cadena_zr_zp_facturas(
                 zps_grupo.append(zp_ref)
 
         for zr in zrs_grupo:
+            # 1. Búsqueda de texto
             for zp_huerfano in mapa_zps_por_augbl.get(zr.partida.belnr, []):
                 if zp_huerfano not in zps_grupo:
                     zps_grupo.append(zp_huerfano)
-
             if zr.zuonr:
                 for zp_ref in mapa_zps_por_zuonr.get(zr.zuonr, []):
                     if zp_ref not in zps_grupo:
                         zps_grupo.append(zp_ref)
-
                 for zp_ref in mapa_zps_por_belnr.get(zr.zuonr, []):
                     if zp_ref not in zps_grupo:
                         zps_grupo.append(zp_ref)
-
             for zp_ref in mapa_zps_por_zuonr.get(zr.partida.belnr, []):
                 if zp_ref not in zps_grupo:
                     zps_grupo.append(zp_ref)
+
+            # 2. ⚡ VINCULACIÓN POR TELARAÑA (BFS)
+            # Si ZR y ZP están conectados por 3eros documentos, los unimos aquí.
+            semillas_b = {zr.partida.belnr}
+            semillas_a = {zr.augbl} if zr.augbl else set()
+            docs_con, augs_con = rastrear_cadena_completa(
+                semillas_b,
+                semillas_a,
+                mapa_facturas_por_zp,
+                facturas_agrupadas,
+                cuentas_impuestos,
+                cuentas_dif_cambio,
+                cuentas_bancarias,
+            )
+            for zp_ref in balde_solo_zps:
+                if zp_ref not in zps_grupo:
+                    # Si el ZP pertenece a la telaraña del ZR, ¡los unimos!
+                    if zp_ref.partida.belnr in docs_con or (
+                        zp_ref.augbl and zp_ref.augbl in augs_con
+                    ):
+                        zps_grupo.append(zp_ref)
 
         if not zps_grupo:
             for zr in zrs_grupo:
@@ -303,12 +317,9 @@ def conciliar_cadena_zr_zp_facturas(
         zps_relacionados = mapa_zr_a_zps.get(zr.id, [])
 
         if not zps_relacionados:
-            # ⚡ ZR DIRECTOS Y AUTOCOMPENSADOS
             semillas_b = {zr.partida.belnr}
             semillas_a = {zr.augbl} if zr.augbl else set()
-
-            # ⚡ LLAMADA SEGURA AL RASTREADOR
-            todos_los_docs_red = rastrear_cadena_completa(
+            docs_con, _ = rastrear_cadena_completa(
                 semillas_b,
                 semillas_a,
                 mapa_facturas_por_zp,
@@ -319,7 +330,7 @@ def conciliar_cadena_zr_zp_facturas(
             )
 
             lineas_directas = []
-            for f_id in todos_los_docs_red:
+            for f_id in docs_con:
                 if f_id != zr.partida.belnr:
                     lineas_directas.extend(facturas_agrupadas.get(f_id, []))
 
@@ -422,7 +433,6 @@ def conciliar_cadena_zr_zp_facturas(
         total_zps_monto = sum(abs(float(zp.wsl)) for zp in zps_relacionados)
         resultados_crudos = []
 
-        # ⚡ CASCADA NIVEL 1
         for zp in zps_relacionados:
             if total_zps_monto > 0:
                 proporcion_zp = abs(float(zp.wsl)) / total_zps_monto
@@ -433,9 +443,7 @@ def conciliar_cadena_zr_zp_facturas(
 
             semillas_b = {zp.partida.belnr}
             semillas_a = {zp.augbl} if zp.augbl else set()
-
-            # ⚡ LLAMADA SEGURA AL RASTREADOR
-            facturas_ids = rastrear_cadena_completa(
+            docs_con, _ = rastrear_cadena_completa(
                 semillas_b,
                 semillas_a,
                 mapa_facturas_por_zp,
@@ -444,7 +452,7 @@ def conciliar_cadena_zr_zp_facturas(
                 cuentas_dif_cambio,
                 cuentas_bancarias,
             )
-            facturas_ids = {f for f in facturas_ids if f != zp.partida.belnr}
+            facturas_ids = {f for f in docs_con if f != zp.partida.belnr}
 
             if not facturas_ids:
                 from sap_sync.models import PartidaPosicion
@@ -469,7 +477,6 @@ def conciliar_cadena_zr_zp_facturas(
                 )
                 continue
 
-            # ⚡ CASCADA NIVEL 2
             datos_facturas = {}
             suma_gastos_todas_facturas_zp = 0.0
 
@@ -556,7 +563,6 @@ def conciliar_cadena_zr_zp_facturas(
                     }
                     suma_gastos_todas_facturas_zp += monto_por_prov[prov]
 
-            # ⚡ CASCADA NIVEL 3
             for f_llave, f_data in datos_facturas.items():
                 if suma_gastos_todas_facturas_zp > 0:
                     proporcion_factura = (
@@ -617,7 +623,121 @@ def conciliar_cadena_zr_zp_facturas(
                 )
             )
 
-    zps_auditoria = [zp for zp in balde_solo_zps if zp.id not in zps_procesados]
+    # ⚡ LA SOLUCIÓN MAESTRA: RESCATE DE ZP's COMPENSADOS
+    # Si un ZP pagó facturas (está compensado) pero no tenía un ZR (banco de otro mes),
+    # NO lo botamos a auditoría. Lo procesamos para que muestre su gasto real.
+    zps_huerfanos_finales = [zp for zp in balde_solo_zps if zp.id not in zps_procesados]
+    zps_auditoria = []
+
+    for zp in zps_huerfanos_finales:
+        # Si el ZP tiene AUGBL (está compensado en SAP) o es Standalone
+        if zp.augbl or (
+            str(zp.ractt).endswith("0") and str(zp.ractt) in cuentas_standalone
+        ):
+            semillas_b = {zp.partida.belnr}
+            semillas_a = {zp.augbl} if zp.augbl else set()
+
+            docs_con, _ = rastrear_cadena_completa(
+                semillas_b,
+                semillas_a,
+                mapa_facturas_por_zp,
+                facturas_agrupadas,
+                cuentas_impuestos,
+                cuentas_dif_cambio,
+                cuentas_bancarias,
+            )
+
+            lineas_directas = []
+            for f_id in docs_con:
+                if f_id != zp.partida.belnr:
+                    lineas_directas.extend(facturas_agrupadas.get(f_id, []))
+
+            monto_total_zp = abs(float(zp.wsl))
+
+            if lineas_directas:
+                monto_gastos = 0.0
+                lineas_validas = []
+                lineas_de_impuesto = []
+                proveedor_doc = ""
+
+                for p in lineas_directas:
+                    if p.lifnr or p.kunnr:
+                        proveedor_doc = p.lifnr or p.kunnr
+                    if getattr(p, "koart", "") in ("K", "D"):
+                        continue
+                    if (
+                        str(p.ractt) in cuentas_bancarias
+                        or p.ractt in cuentas_dif_cambio
+                    ):
+                        continue
+                    if p.ractt in cuentas_impuestos:
+                        lineas_de_impuesto.append(p)
+                    else:
+                        lineas_validas.append(p)
+                        monto_gastos += abs(float(p.wsl))
+
+                if not lineas_validas and lineas_de_impuesto:
+                    for p_imp in lineas_de_impuesto:
+                        lineas_validas.append(p_imp)
+                        monto_gastos += abs(float(p_imp.wsl))
+
+                facturas_involucradas = {
+                    p.partida.belnr
+                    for p in lineas_directas
+                    if p.partida.belnr != zp.partida.belnr
+                }
+                facturas_str = ", ".join(sorted(list(facturas_involucradas)))
+
+                if not lineas_validas:
+                    cuenta_acreedor = "SIN_DETALLE_GASTO"
+                    for p in lineas_directas:
+                        if getattr(p, "koart", "") in ("K", "D"):
+                            cuenta_acreedor = str(p.ractt)
+                            break
+                    resultados.append(
+                        _generar_fila_dashboard(
+                            zr=zp,
+                            zp=zp,
+                            monto=monto_total_zp,
+                            cuenta_gasto=cuenta_acreedor,
+                            tipo="EGRESOS",
+                            proveedor=proveedor_doc,
+                            factura=facturas_str,
+                        )
+                    )
+                else:
+                    for p in lineas_validas:
+                        prop = (
+                            abs(float(p.wsl)) / monto_gastos
+                            if monto_gastos > 0
+                            else 1.0 / len(lineas_validas)
+                        )
+                        resultados.append(
+                            _generar_fila_dashboard(
+                                zr=zp,
+                                zp=zp,
+                                monto=monto_total_zp * prop,
+                                cuenta_gasto=p.ractt,
+                                tipo="EGRESOS",
+                                proveedor=proveedor_doc,
+                                factura=facturas_str,
+                            )
+                        )
+            else:
+                resultados.append(
+                    _generar_fila_dashboard(
+                        zr=zp,
+                        zp=zp,
+                        monto=monto_total_zp,
+                        cuenta_gasto="SIN_DETALLE_GASTO",
+                        tipo="EGRESOS",
+                        proveedor="",
+                        factura="",
+                    )
+                )
+        else:
+            # Solo si el ZP está ABIERTO (sin augbl) va a auditoría.
+            zps_auditoria.append(zp)
 
     return resultados, zps_auditoria, zrs_auditoria
 
