@@ -585,6 +585,7 @@ class Command(BaseCommand):
             ("Partida", "Bktxt", "bktxt", "TEXTO"),
             ("Partida", "Bldat", "bldat", "FECHA"),
             ("Partida", "Budat", "budat", "FECHA"),
+            ("Partida", "Stblg", "stblg", "TEXTO"),
             ("PartidaPosicion", "Bukrs", "bukrs", "TEXTO"),
             ("PartidaPosicion", "Docnr", "docnr", "TEXTO"),
             ("PartidaPosicion", "Ryear", "ryear", "TEXTO"),
@@ -625,6 +626,10 @@ class Command(BaseCommand):
             ("Compensacion", "Augbl", "augbl", "TEXTO"),
             ("Compensacion", "Bschl", "bschl", "TEXTO"),
             ("Compensacion", "Koart", "koart", "TEXTO"),
+            ("EntidadContable", "Codigo", "codigo", "TEXTO"),
+            ("EntidadContable", "Name1", "nombre", "TEXTO"),
+            ("EntidadContable", "Stcd1", "rif", "TEXTO"),
+            ("EntidadContable", "Tipo", "tipo", "TEXTO"),
         ]
 
         mapeos_creados = 0

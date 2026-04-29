@@ -189,7 +189,7 @@ LANGUAGE_CODE = "es-ve"
 
 TIME_ZONE = "America/Caracas"
 
-USE_TZ = True
+USE_TZ = False
 
 USE_I18N = False
 

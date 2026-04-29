@@ -47,27 +47,6 @@ CENTAVO = Decimal("0.01")
 # ---------------------------------------------------------------------------
 # CONFIGURACIÓN DE CUENTAS DE EXTRACCIÓN ESPECIAL
 # ---------------------------------------------------------------------------
-# Define aquí las cuentas mayor (ractt) que deben procesarse de forma especial
-# cuando aparecen junto a un tipo de documento concreto (blart).
-#
-# Campos:
-#   ractt         — cuenta mayor SAP (str).
-#   blart         — tipo de documento SAP, p.ej. "ZR". None = cualquier tipo.
-#   categoria     — categoría que se grabará en el dashboard.
-#   sub_categoria — sub-categoría que se grabará en el dashboard.
-#   redistribuir  — comportamiento al encontrar la cuenta:
-#                     False → registro independiente en el dashboard + ajuste
-#                             matemático sobre la posición bancaria.
-#                     True  → el monto se redistribuye proporcionalmente entre las
-#                             demás posiciones; NO genera registro propio.
-#   inyectar      — True si el documento ZR/ZH de esta cuenta NO pasa por las
-#                   cuentas transitorias sino que va directamente de la cuenta
-#                   real (hkonts_ctas_real) a esta cuenta especial.
-#                   En ese caso el motor necesita buscarlo explícitamente por
-#                   belnr para inyectarlo al flujo principal.
-#                   False (default) si el documento ya entra por el flujo normal
-#                   de transitorias/standalone.
-#
 CUENTAS_EXTRACCION_ESPECIAL: list[dict] = [
     {
         "ractt": "525010103",
@@ -77,8 +56,6 @@ CUENTAS_EXTRACCION_ESPECIAL: list[dict] = [
         "redistribuir": False,
         "inyectar": True,  # ZR: cuenta real ↔ 525010103, no pasa por transitorias
     },
-    # Ejemplo cuenta que redistribuye y ya entra por el flujo normal:
-    # { "ractt": "525100400", "blart": "ZR", "categoria": "IMPUESTO", "sub_categoria": "IMPUESTO", "redistribuir": True, "inyectar": False },
 ]
 
 # Índice interno: (ractt, blart) → config_dict
@@ -88,19 +65,16 @@ for _cfg in CUENTAS_EXTRACCION_ESPECIAL:
     if _cfg["blart"] is not None:
         _INDICE_ESPECIALES.setdefault((_cfg["ractt"], None), _cfg)
 
-# Subconjunto de cuentas que requieren inyección explícita al flujo
 _CFGS_INYECTAR: list[dict] = [
     c for c in CUENTAS_EXTRACCION_ESPECIAL if c.get("inyectar")
 ]
 
-# Conjunto completo de ractt especiales (para excluirlas de cuentas_gasto_puro y del prorrateo)
 _RACCTS_EXTRACCION_ESPECIAL: frozenset[str] = frozenset(
     c["ractt"] for c in CUENTAS_EXTRACCION_ESPECIAL
 )
 
 
 def _buscar_config_especial(ractt: str, blart: str | None) -> dict | None:
-    """Retorna la config especial para (ractt, blart), intentando comodín si no hay exacta."""
     return _INDICE_ESPECIALES.get((ractt, blart)) or _INDICE_ESPECIALES.get(
         (ractt, None)
     )
@@ -127,6 +101,7 @@ class FastPos:
         "blart",
         "budat",
         "bktxt",
+        "stblg",
     ]
 
     def __init__(self, d: dict) -> None:
@@ -146,12 +121,10 @@ class FastPos:
         self.blart = d["partida__blart"]
         self.budat = d["partida__budat"]
         self.bktxt = str(d["partida__bktxt"] or "").strip()
+        self.stblg = str(d.get("partida__stblg") or "").strip()
 
-    def __repr__(self) -> str:  # útil en depuración
-        return (
-            f"<FastPos id={self.id} ractt={self.ractt} blart={self.blart} "
-            f"belnr={self.belnr} wsl={self.wsl}>"
-        )
+    def __repr__(self) -> str:
+        return f"<FastPos id={self.id} ractt={self.ractt} blart={self.blart} belnr={self.belnr} wsl={self.wsl}>"
 
 
 CAMPOS_QUERY = [
@@ -170,13 +143,13 @@ CAMPOS_QUERY = [
     "partida__blart",
     "partida__budat",
     "partida__bktxt",
+    "partida__stblg",
 ]
 
 
 def _fetch_fast_chunks(
     queryset, filter_kwarg: str, values_set: set, chunk_size: int = 2500
 ) -> list[FastPos]:
-    """Ejecuta el queryset en lotes para evitar límites de BD con grandes conjuntos de valores."""
     results: list[FastPos] = []
     v_list = list(values_set)
     for i in range(0, len(v_list), chunk_size):
@@ -199,18 +172,9 @@ def _to_date(valor) -> date:
 # Motor principal
 # ---------------------------------------------------------------------------
 def calculo_conciliacion(fecha_inicio, fecha_fin):
-    """
-    Ejecuta la conciliación bancaria para el rango de fechas indicado.
-
-    Returns:
-        dict con claves 'dashboard' y 'auditoria' indicando cuántos registros
-        se crearon en cada tabla.
-    """
     logger.info("Iniciando conciliación | %s → %s", fecha_inicio, fecha_fin)
 
-    # -----------------------------------------------------------------------
     # 1. CONFIGURACIONES Y MAPEOS
-    # -----------------------------------------------------------------------
     cuentas_conf = CuentaConfiguracion.objects.filter(activa=True)
     hkont_por_tipo: dict[str, set[str]] = defaultdict(set)
     for obj in cuentas_conf.values("tipo", "cuenta"):
@@ -220,8 +184,6 @@ def calculo_conciliacion(fecha_inicio, fecha_fin):
     hkont_dif_cambio = hkont_por_tipo["DIF_CAMBIO"]
     hkont_comision = hkont_por_tipo["COMISION"]
 
-    # Las cuentas definidas en CUENTAS_EXTRACCION_ESPECIAL también quedan
-    # excluidas de cuentas_gasto_puro para evitar doble clasificación.
     cuentas_especiales = (
         hkont_impuestos
         | hkont_dif_cambio
@@ -235,9 +197,7 @@ def calculo_conciliacion(fecha_inicio, fecha_fin):
     cuentas_gasto_puro = set(mapeo_gastos.keys()) - cuentas_especiales
     fecha_obj = _to_date(fecha_inicio)
 
-    # -----------------------------------------------------------------------
     # 2. IDENTIFICACIÓN DE CUENTAS BANCARIAS
-    # -----------------------------------------------------------------------
     hkonts_ctas_real: set[str] = set(
         SaldoBancario.objects.filter(ryear=_fecha_a_anio_periodo(fecha_obj)[0])
         .values_list("hkont", flat=True)
@@ -248,8 +208,7 @@ def calculo_conciliacion(fecha_inicio, fecha_fin):
 
     if prefijos_hkont:
         condicion_busqueda = reduce(
-            operator.or_,
-            (Q(ractt__startswith=p) for p in prefijos_hkont),
+            operator.or_, (Q(ractt__startswith=p) for p in prefijos_hkont)
         )
         hkonts_partidas: set[str] = set(
             PartidaPosicion.objects.filter(condicion_busqueda)
@@ -276,10 +235,7 @@ def calculo_conciliacion(fecha_inicio, fecha_fin):
         hkonts_ctas_real | cuentas_transitorias | cuentas_standalone
     )
 
-    # -----------------------------------------------------------------------
     # 3. PRE-FETCH MASIVO DE BANCOS Y PUENTES
-    # -----------------------------------------------------------------------
-    # Fetch base: transitorias y standalone (flujo normal)
     raw_bancos = list(
         PartidaPosicion.objects.filter(
             ractt__in=cuentas_transitorias | cuentas_standalone,
@@ -289,12 +245,8 @@ def calculo_conciliacion(fecha_inicio, fecha_fin):
     )
 
     # ── Inyección de documentos con inyectar=True ───────────────────────────
-    # Estas cuentas van directamente cuenta_real ↔ cuenta_especial sin pasar
-    # por transitorias, así que el fetch base los ignora completamente.
-    # Estrategia:
-    #   1. Buscar belnrs en la cuenta especial (ractt + blart + rango de fechas).
-    #   2. Traer las posiciones en cuenta real para esos mismos belnrs.
-    #   3. Añadir a raw_bancos sin duplicar por id.
+    raw_inyectados = []
+    belnrs_inyectar = set()
     if _CFGS_INYECTAR:
         condiciones_inyectar = reduce(
             operator.or_,
@@ -306,14 +258,12 @@ def calculo_conciliacion(fecha_inicio, fecha_fin):
                 )
                 if _c["blart"]
                 else Q(
-                    ractt=_c["ractt"],
-                    partida__budat__range=[fecha_inicio, fecha_fin],
+                    ractt=_c["ractt"], partida__budat__range=[fecha_inicio, fecha_fin]
                 )
                 for _c in _CFGS_INYECTAR
             ),
         )
-        # belnrs de los comprobantes que contienen la cuenta especial
-        belnrs_inyectar: set[str] = set(
+        belnrs_inyectar = set(
             PartidaPosicion.objects.filter(condiciones_inyectar)
             .values_list("partida__belnr", flat=True)
             .distinct()
@@ -321,22 +271,24 @@ def calculo_conciliacion(fecha_inicio, fecha_fin):
 
         if belnrs_inyectar:
             ids_ya_cargados = {d["id"] for d in raw_bancos}
-            # Trae la línea de la cuenta REAL del mismo comprobante
+
+            # SOLUCIÓN 1: Traer TODAS las líneas del comprobante (no filtramos por hkonts_ctas_real)
             raw_inyectados = list(
                 PartidaPosicion.objects.filter(
-                    ractt__in=hkonts_ctas_real,
                     partida__belnr__in=belnrs_inyectar,
                     partida__blart__in=TIPOS_DOCUMENTO_BANCARIO,
-                )
-                .exclude(id__in=ids_ya_cargados)
-                .values(*CAMPOS_QUERY)
+                ).values(*CAMPOS_QUERY)
             )
-            raw_bancos.extend(raw_inyectados)
-            logger.info(
-                "Inyección cuentas especiales: %d belnrs, %d posiciones nuevas",
-                len(belnrs_inyectar),
-                len(raw_inyectados),
-            )
+
+            for d in raw_inyectados:
+                # SOLUCIÓN 2: Inyectar un augbl virtual para obligar al motor a agrupar el documento
+                if not d["augbl"]:
+                    d["augbl"] = d["partida__belnr"]
+
+                # Añadir a raw_bancos SOLO la línea de la cuenta real
+                if d["ractt"] in hkonts_ctas_real and d["id"] not in ids_ya_cargados:
+                    raw_bancos.append(d)
+                    ids_ya_cargados.add(d["id"])
 
     posiciones_bancarias = [FastPos(d) for d in raw_bancos]
 
@@ -349,6 +301,17 @@ def calculo_conciliacion(fecha_inicio, fecha_fin):
         PartidaPosicion.objects.all(), "augbl", augbls_relevantes
     )
 
+    # SOLUCIÓN 3: Inyectar las posiciones especiales (ej. 525010103) al pool de FastPos en memoria
+    if raw_inyectados:
+        ids_en_lista = {p.id for p in partidas_por_augbl_list}
+        for d in raw_inyectados:
+            if d["id"] not in ids_en_lista:
+                fast_p = FastPos(d)
+                if not fast_p.augbl:
+                    fast_p.augbl = fast_p.belnr
+                partidas_por_augbl_list.append(fast_p)
+                ids_en_lista.add(fast_p.id)
+
     partidas_por_augbl: dict[str, list[FastPos]] = defaultdict(list)
     belnrs_puente_global: set[str] = set()
 
@@ -360,11 +323,7 @@ def calculo_conciliacion(fecha_inicio, fecha_fin):
     registros_dashboard: list[DashboardConsolidado] = []
     registros_auditoria: list[AsientoAuditoria] = []
 
-    # -----------------------------------------------------------------------
     # 3.1 EXTRACCIÓN Y REDISTRIBUCIÓN DE CUENTAS ESPECIALES
-    # -----------------------------------------------------------------------
-    # monto_extra_por_pos_id acumula los montos que deben redistribuirse
-    # proporcionalmente entre las demás posiciones de cada grupo.
     monto_extra_por_pos_id: dict[int, Decimal] = defaultdict(Decimal)
 
     for augbl, pp_list in partidas_por_augbl.items():
@@ -380,7 +339,6 @@ def calculo_conciliacion(fecha_inicio, fecha_fin):
             if not cfg or p.abs_wsl == Decimal("0"):
                 continue
 
-            # Busca la línea bancaria más próxima al mismo comprobante
             banco_match = next(
                 (b for b in bancos if b.belnr == p.belnr and b.abs_wsl >= p.abs_wsl),
                 None,
@@ -391,34 +349,31 @@ def calculo_conciliacion(fecha_inicio, fecha_fin):
                 continue
 
             if cfg["redistribuir"]:
-                # ── Modo redistribución ─────────────────────────────────────
-                # El monto se acumula para repartirse en el prorrateo (sección 6).
-                # No se genera registro propio en el dashboard.
                 monto_extra_por_pos_id[banco_match.id] += p.abs_wsl
                 p.abs_wsl = Decimal("0")
                 p.wsl = Decimal("0")
 
-                # Sincronizar con posiciones_bancarias si la posición especial
-                # coincide con una línea bancaria registrada.
                 pos_match = next(
                     (pb for pb in posiciones_bancarias if pb.id == p.id), None
                 )
                 if pos_match:
                     pos_match.abs_wsl = Decimal("0")
                     pos_match.wsl = Decimal("0")
-
             else:
-                # ── Modo registro independiente ─────────────────────────────
-                # Genera un registro propio en el dashboard y ajusta
-                # matemáticamente la posición bancaria para no inflar el N:M.
+                # ── Modo registro independiente (Neteo de Gasto) ────────────
+                # Se mantiene siempre como EGRESO.
+                # Si es Debe ('S'), es un cobro de comisión -> Positivo
+                # Si es Haber ('H'), es devolución de comisión -> Negativo
+                monto_real = p.abs_wsl if p.drcrk == "S" else -p.abs_wsl
+
                 kwargs_especial = {
                     "tipo_operacion": "EGRESO",
                     "categoria": cfg["categoria"],
                     "sub_categoria": cfg["sub_categoria"],
                     "cuenta_contable": banco_match.ractt,
                     "cuenta_gasto": p.ractt,
-                    "monto_base": p.abs_wsl,
-                    "monto_total": p.abs_wsl,
+                    "monto_base": monto_real,
+                    "monto_total": monto_real,
                     "rwcur": p.rwcur,
                     "fecha_contabilizacion": p.budat,
                     "documento_primario": p.belnr,
@@ -432,8 +387,7 @@ def calculo_conciliacion(fecha_inicio, fecha_fin):
 
                 registros_dashboard.append(DashboardConsolidado(**kwargs_especial))
 
-                # Ajuste matemático: restar el monto de la cuenta especial de la
-                # línea bancaria para que el N:M trabaje con el importe neto real.
+                # Ajuste matemático unificado para el emparejador N:M
                 banco_match.abs_wsl -= p.abs_wsl
                 banco_match.wsl = (
                     -(banco_match.abs_wsl)
@@ -449,9 +403,11 @@ def calculo_conciliacion(fecha_inicio, fecha_fin):
                     pos_match.abs_wsl = banco_match.abs_wsl
                     pos_match.wsl = banco_match.wsl
 
-    # -----------------------------------------------------------------------
+                # Neutralizar la línea especial para el emparejador N:M
+                p.abs_wsl = Decimal("0")
+                p.wsl = Decimal("0")
+
     # Base forense del puente y bktxt
-    # -----------------------------------------------------------------------
     info_puente_list = _fetch_fast_chunks(
         PartidaPosicion.objects.all(), "partida__belnr", belnrs_puente_global
     )
@@ -460,17 +416,11 @@ def calculo_conciliacion(fecha_inicio, fecha_fin):
 
     for pp in info_puente_list:
         info_puente_por_belnr[pp.belnr].append(
-            {
-                "ractt": pp.ractt,
-                "lifnr": pp.lifnr,
-                "kunnr": pp.kunnr,
-            }
+            {"ractt": pp.ractt, "lifnr": pp.lifnr, "kunnr": pp.kunnr}
         )
         zp_bktxt_map[pp.belnr] = pp.bktxt
 
-    # -----------------------------------------------------------------------
-    # 4. EL EMPAREJADOR N:M UNIFICADO (OPTIMIZADO CON HASH MAPS)
-    # -----------------------------------------------------------------------
+    # 4. EL EMPAREJADOR N:M UNIFICADO
     augbl_allocations: dict[int, list[dict]] = defaultdict(list)
 
     for augbl, pp_list in partidas_por_augbl.items():
@@ -482,14 +432,21 @@ def calculo_conciliacion(fecha_inicio, fecha_fin):
             by_bukrs[p.bukrs].append(p)
 
         for bukrs, b_list in by_bukrs.items():
-            # Solo cuentas bancarias netas (ya sin las especiales extraídas)
             zrs = [
                 p
                 for p in b_list
                 if p.blart in TIPOS_DOCUMENTO_BANCARIO
                 and p.ractt in todas_las_cuentas_bancarias
             ]
-            zps = [p for p in b_list if p.blart not in TIPOS_DOCUMENTO_BANCARIO]
+            zps = [
+                p
+                for p in b_list
+                if p.blart not in TIPOS_DOCUMENTO_BANCARIO
+                or (
+                    p.blart in TIPOS_DOCUMENTO_BANCARIO
+                    and p.ractt not in todas_las_cuentas_bancarias
+                )
+            ]
 
             if not zps or not zrs:
                 continue
@@ -592,9 +549,7 @@ def calculo_conciliacion(fecha_inicio, fecha_fin):
             for k, v in allocations_temp.items():
                 augbl_allocations[k].extend(v)
 
-    # -----------------------------------------------------------------------
     # 5. EXTRACCIÓN GLOBAL DE FACTURAS ORIGEN
-    # -----------------------------------------------------------------------
     belnrs_primer_salto = {
         alloc["zp_belnr"] for allocs in augbl_allocations.values() for alloc in allocs
     }
@@ -634,24 +589,7 @@ def calculo_conciliacion(fecha_inicio, fecha_fin):
         if pp.zuonr:
             invoice_metadata[pp.belnr]["zuonr"] = pp.zuonr
 
-    # -----------------------------------------------------------------------
     # 6. MOTOR DE TRAZABILIDAD Y PRORRATEO AISLADO
-    # -----------------------------------------------------------------------
-    def _auditar(pos: FastPos, motivo: str) -> None:
-        registros_auditoria.append(
-            AsientoAuditoria(
-                bukrs=pos.bukrs,
-                belnr=pos.belnr,
-                gjahr=pos.gjahr,
-                blart=pos.blart,
-                cuenta_contable=pos.ractt,
-                monto=pos.wsl,
-                rwcur=pos.rwcur,
-                fecha=pos.budat,
-                motivo_descarte=motivo,
-            )
-        )
-
     _traspaso_cache: dict[tuple, bool] = {}
 
     def _es_traspaso_interno(augbl: str, bukrs: str) -> bool:
@@ -690,7 +628,6 @@ def calculo_conciliacion(fecha_inicio, fecha_fin):
         return True
 
     for pos in posiciones_bancarias:
-        # Se omiten partidas neteadas a cero (extraídas como especiales) o sin AUGBL
         if not pos.augbl or pos.abs_wsl == Decimal("0"):
             continue
 
@@ -732,9 +669,6 @@ def calculo_conciliacion(fecha_inicio, fecha_fin):
         if not allocations:
             continue
 
-        # ── Redistribución proporcional de cuentas especiales ───────────────
-        # Si existen montos acumulados para redistribuir en esta posición,
-        # se incorporan a cada tramo de la asignación N:M de forma proporcional.
         monto_extra = monto_extra_por_pos_id.get(pos.id, Decimal("0"))
         if monto_extra > Decimal("0"):
             total_alloc = sum(a["monto"] for a in allocations)
@@ -762,9 +696,6 @@ def calculo_conciliacion(fecha_inicio, fecha_fin):
             factura_belnrs = segundo_salto_por_belnr.get(zp_belnr) or {zp_belnr}
             doc_secundarios_str = ",".join(factura_belnrs)
 
-            # Las cuentas en CUENTAS_EXTRACCION_ESPECIAL se excluyen aquí:
-            # ya fueron manejadas en 3.1 (registro propio o redistribución)
-            # y no deben entrar al prorrateo normal.
             lineas_origen = [
                 linea
                 for f in factura_belnrs
@@ -799,7 +730,6 @@ def calculo_conciliacion(fecha_inicio, fecha_fin):
                 if l.ractt in hkont_dif_cambio and l not in lineas_acreedor_deudor
             ]
 
-            # Cascada de prioridad para seleccionar las líneas activas
             if lineas_gasto_puro:
                 lineas_activas = lineas_gasto_puro
             elif lineas_no_mapeadas:
@@ -860,11 +790,12 @@ def calculo_conciliacion(fecha_inicio, fecha_fin):
                             "COMISION"
                         ]
                     else:
-                        # Revisamos si la cuenta está en las especiales configuradas
                         cfg_cuenta = _buscar_config_especial(cuenta_str, None)
                         if cfg_cuenta:
-                            grp["categoria"] = cfg_cuenta["categoria"]
-                            grp["sub_categoria"] = cfg_cuenta["sub_categoria"]
+                            grp["categoria"], grp["sub_categoria"] = (
+                                cfg_cuenta["categoria"],
+                                cfg_cuenta["sub_categoria"],
+                            )
                         else:
                             grp["categoria"] = grp["sub_categoria"] = "SIN_CLASIFICAR"
 
@@ -908,9 +839,7 @@ def calculo_conciliacion(fecha_inicio, fecha_fin):
 
                 registros_dashboard.append(DashboardConsolidado(**kwargs_dashboard))
 
-    # -----------------------------------------------------------------------
-    # 7. LIMPIEZA DEL RANGO + GUARDADO MASIVO (bulk_create)
-    # -----------------------------------------------------------------------
+    # 7. LIMPIEZA DEL RANGO + GUARDADO MASIVO
     del_dash = DashboardConsolidado.objects.filter(
         fecha_contabilizacion__range=[fecha_inicio, fecha_fin]
     ).delete()
@@ -918,9 +847,7 @@ def calculo_conciliacion(fecha_inicio, fecha_fin):
         fecha__range=[fecha_inicio, fecha_fin]
     ).delete()
     logger.info(
-        "Limpieza previa | dashboard=%s | auditoria=%s",
-        del_dash[0],
-        del_aud[0],
+        "Limpieza previa | dashboard=%s | auditoria=%s", del_dash[0], del_aud[0]
     )
 
     n_dashboard = n_auditoria = 0

@@ -171,6 +171,13 @@ class Partida(models.Model):
     bktxt = models.CharField("Texto Cabecera", max_length=255, blank=True, null=True)
     bldat = models.DateField("Fecha Documento", blank=True, null=True)
     budat = models.DateField("Fecha Contabilización", db_index=True)
+    stblg = models.CharField(
+        "Documento de anulación",
+        max_length=10,
+        blank=True,
+        null=True,
+        help_text="Número de documento de anulación en SAP (STBLG)",
+    )
 
     class Meta:
         verbose_name = "Partida (Cabecera)"
@@ -373,3 +380,35 @@ class MapeoCampo(models.Model):
 
     def __str__(self):
         return f"{self.modelo_destino}: {self.campo_sap} -> {self.campo_django} ({self.tipo_dato})"
+
+
+class EntidadContable(models.Model):
+    """
+    Almacena los datos maestros de Acreedores (Proveedores) y Deudores (Clientes).
+    """
+
+    TIPO_CHOICES = [
+        ("ACREEDOR", "Acreedor"),
+        ("DEUDOR", "Deudor"),
+    ]
+
+    codigo = models.CharField("Código SAP", max_length=10, db_index=True)
+    nombre = models.CharField(
+        "Nombre / Razón Social", max_length=100, blank=True, null=True
+    )
+    rif = models.CharField("RIF / Tax ID", max_length=16, blank=True, null=True)
+    tipo = models.CharField("Tipo", max_length=10, choices=TIPO_CHOICES)
+
+    creado_en = models.DateTimeField(auto_now_add=True)
+    actualizado_en = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "Entidad Contable"
+        verbose_name_plural = "Entidades Contables"
+        unique_together = (
+            "codigo",
+            "tipo",
+        )  # Maneja casos donde un código tiene ambos roles
+
+    def __str__(self):
+        return f"{self.codigo} - {self.nombre} ({self.tipo})"

@@ -37,10 +37,10 @@ def _fecha_a_anio_periodo(f: date) -> tuple[str, str]:
     mes = f.month
     if mes >= 5:
         periodo = mes - 4
-        anio = f.year
+        anio = f.year + 1
     else:
         periodo = mes + 8
-        anio = f.year - 1
+        anio = f.year
     return str(anio), str(periodo).zfill(2)
 
 
@@ -488,6 +488,14 @@ class SAPSyncOrchestrator:
         self.log.verificar_cancelacion()
         self.paso8_calculo_disponibilidad(fecha_inicio, fecha_fin)
 
+        self.log.registrar_inicio_paso("paso9", "Maestros de Acreedores y Deudores")
+        n_entidades = self._paso9_entidades_contables(fecha_inicio, fecha_fin)
+        self.log.registrar_fin_paso(
+            "paso9",
+            {"entidades_procesadas": n_entidades},
+            estado=_obtener_estado_paso(self.log, err_antes),
+        )
+
         self.log.refresh_from_db(fields=["errores_count"])
         estado_final = "PARCIAL" if self.log.errores_count > 0 else "EXITOSO"
         self.log.marcar_finalizado(estado_final)
@@ -622,7 +630,7 @@ class SAPSyncOrchestrator:
         registros, errores = client.get_data(
             "ZFI_SALDO_BANCARIO", filters=filtro_saldos
         )
-
+        print(registros)
         if errores:
             for err in errores:
                 self.log.registrar_error(
@@ -1037,3 +1045,71 @@ class SAPSyncOrchestrator:
         from sap_sync.utils.conciliation.calculo import calculo_conciliacion
 
         calculo_conciliacion(fecha_inicio, fecha_fin)
+
+    def _paso9_entidades_contables(self, fecha_inicio, fecha_fin) -> int:
+        from sap_sync.models import EntidadContable
+
+        # 1. Obtener códigos únicos de proveedores y clientes en el rango de fechas
+        posiciones = PartidaPosicion.objects.filter(
+            partida__budat__range=[fecha_inicio, fecha_fin]
+        ).values_list("lifnr", "kunnr")
+
+        codigos_unicos = set()
+        for lifnr, kunnr in posiciones:
+            if lifnr:
+                codigos_unicos.add(lifnr.strip())
+            if kunnr:
+                codigos_unicos.add(kunnr.strip())
+
+        if not codigos_unicos:
+            return 0
+
+        # 2. Filtrar los que ya tenemos para no re-consultar innecesariamente
+        existentes = set(
+            EntidadContable.objects.filter(codigo__in=codigos_unicos).values_list(
+                "codigo", flat=True
+            )
+        )
+
+        faltantes = list(codigos_unicos - existentes)
+        if not faltantes:
+            return 0
+
+        # 3. Consultar a SAP en lotes usando OData filters
+        client = SAPODataClient(base_url=SAPServiceURL.ENTIDADES)
+        filtros_odata = []
+        for chunk in _chunked_list(faltantes, 20):
+            partes_or = [f"Codigo eq '{cod}'" for cod in chunk]
+            filtros_odata.append(" or ".join(partes_or))
+
+        def cb_entidades(registros):
+            mapper = GeneradorDinamicoSAP("EntidadContable")
+            count = 0
+            for rec in registros:
+                kwargs = mapper.construir_kwargs(rec)
+                # Aplicamos la lógica: Guardar único si son iguales, por separado si no.
+                # Al usar update_or_create con (codigo, tipo), Django lo resuelve solo.
+                EntidadContable.objects.update_or_create(
+                    codigo=kwargs["codigo"],
+                    tipo=kwargs["tipo"],
+                    defaults={
+                        "nombre": kwargs["nombre"],
+                        "rif": kwargs["rif"],
+                    },
+                )
+                count += 1
+            return count
+
+        resultados = _procesar_y_guardar_en_paralelo_sap_batch(
+            client,
+            "ZFI_ACREEDORES_DEUDORES",
+            filtros_odata,
+            db_callback=cb_entidades,
+            max_workers=settings.SAP_MAX_WORKERS_DEFAULT,
+            is_raw=True,
+            paso_log=9,
+            log_obj=self.log,
+            paso_id="paso9",
+        )
+
+        return sum(resultados) if resultados else 0

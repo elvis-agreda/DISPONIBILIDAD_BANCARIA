@@ -27,10 +27,9 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 class SAPServiceURL:
     PARTIDAS = f"{URL_BASE}:{SAP_PORT}/sap/opu/odata/sap/ZFI_PARTIDAS_CDS"
     COMPENSACIONES = f"{URL_BASE}:{SAP_PORT}/sap/opu/odata/sap/ZFI_COMPENSACIONES_CDS"
-    SALDOS_BANCARIOS = (
-        f"{URL_BASE}:{SAP_PORT}/sap/opu/odata/sap/ZFI_SALDO_BANCARIO_CDS/"
-    )
+    SALDOS_BANCARIOS = f"{URL_BASE}:{SAP_PORT}/sap/opu/odata/sap/ZFI_SALDO_BANCARIO_CDS"
     TASA_BCV = f"{URL_BASE}:{SAP_PORT}/fmcall/ZFI_TASA_BCV"
+    ENTIDADES = "/sap/opu/odata/sap/ZFI_ACREEDORES_DEUDORES_CDS"
     USER_TCODE_CHECK = f"{URL_BASE}:{SAP_PORT}/fmcall/ZHTTP_USER_TCODE_CHECK"
 
 
