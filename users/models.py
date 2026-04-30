@@ -15,7 +15,7 @@ class UsuarioSAP(AbstractUser):
     transacciones_sap = models.JSONField("Transacciones SAP", default=list, blank=True)
 
     def __str__(self):
-        return f"{self.username} - {self.get_rol_display()}"
+        return f"{self.username} - {self.get_rol_display()}"  # type: ignore
 
 
 class TransaccionSAP(models.Model):
@@ -35,4 +35,4 @@ class TransaccionSAP(models.Model):
         ordering = ["-jerarquia"]
 
     def __str__(self):
-        return f"{self.tcode} -> {self.get_rol_asociado_display()}"
+        return f"{self.tcode} -> {self.get_rol_asociado_display()}"  # type: ignore
