@@ -38,7 +38,7 @@ DIGITOS_INGRESO = frozenset(["3", "4", "6"])
 _CATEGORIA_ESPECIAL = {
     "IMPUESTO": ("IMPUESTO", "IMPUESTO_RETENIDO"),
     "DIF_CAMBIO": ("DIFERENCIAL_CAMBIARIO", "DIFERENCIAL_CAMBIARIO"),
-    "COMISION": ("COMISION_BANCARIA", "COMISION_BANCARIA"),
+    "COMISION": ("COMISION BANCARIA", "COMISION BANCARIA"),
 }
 
 CENTAVO = Decimal("0.01")
@@ -51,11 +51,20 @@ CUENTAS_EXTRACCION_ESPECIAL: list[dict] = [
     {
         "ractt": "525010103",
         "blart": "ZR",
-        "categoria": "COMISION_BANCARIA",
-        "sub_categoria": "COMISION_BANCARIA",
+        "categoria": "COMISION BANCARIA",
+        "sub_categoria": "COMISION BANCARIA",
         "redistribuir": False,
         "inyectar": True,  # ZR: cuenta real ↔ 525010103, no pasa por transitorias
     },
+    {
+        "ractt": "214010100",
+        "blart": "ZR",
+        "categoria": "NOMINA ACUMULADA",
+        "sub_categoria": "NOMINA ACUMULADA",
+        "redistribuir": False,
+        "inyectar": True, 
+    }
+    
 ]
 
 # Índice interno: (ractt, blart) → config_dict
@@ -195,16 +204,29 @@ def calculo_conciliacion(fecha_inicio, fecha_fin):
         str(obj.cuenta_gasto): obj for obj in ClasificacionGasto.objects.all()
     }
     cuentas_gasto_puro = set(mapeo_gastos.keys()) - cuentas_especiales
+    cuentas_gasto_directo = {
+        str(obj.cuenta_gasto) for obj in ClasificacionGasto.objects.filter(es_gasto_directo=True)
+    }
     fecha_obj = _to_date(fecha_inicio)
 
     # 2. IDENTIFICACIÓN DE CUENTAS BANCARIAS
+    # Usamos tanto el maestro de saldos como los documentos bancarios reales para capturar prefijos
     hkonts_ctas_real: set[str] = set(
         SaldoBancario.objects.filter(ryear=_fecha_a_anio_periodo(fecha_obj)[0])
         .values_list("hkont", flat=True)
         .distinct()
     )
+    
+    hkonts_desde_zr: set[str] = set(
+        PartidaPosicion.objects.filter(
+            partida__blart__in=TIPOS_DOCUMENTO_BANCARIO,
+            partida__budat__range=[fecha_inicio, fecha_fin]
+        ).values_list("ractt", flat=True).distinct()
+    )
 
-    prefijos_hkont = [str(h)[:-1] for h in hkonts_ctas_real if h]
+    # El conjunto de prefijos se basa en la unión de ambos para máxima cobertura
+    prefijos_hkont = {str(h)[:-1] for h in (hkonts_ctas_real | hkonts_desde_zr) if h}
+
 
     if prefijos_hkont:
         condicion_busqueda = reduce(
@@ -451,13 +473,23 @@ def calculo_conciliacion(fecha_inicio, fecha_fin):
             if not zps or not zrs:
                 continue
 
-            zp_totals: dict[str, Decimal] = defaultdict(Decimal)
-            for zp in zps:
-                zp_totals[zp.belnr] += zp.abs_wsl
+            # Excluir documentos de compensación (blart=AB) del pool de ZPs.
+            zps = [p for p in zps if p.blart != "AB"]
 
-            zps_pool = [
-                {"belnr": k, "wsl": v} for k, v in zp_totals.items() if v > Decimal("0")
-            ]
+            # Si no hay ZPs, no podemos emparejar, pero no descartamos el grupo
+            # pues los ZRs podrían ser traspasos o asientos directos.
+            if not zps:
+                zps_pool = []
+            else:
+                zp_totals: dict[str, Decimal] = defaultdict(Decimal)
+                for zp in zps:
+                    zp_totals[zp.belnr] += zp.abs_wsl
+
+                zps_pool = [
+                    {"belnr": k, "wsl": v}
+                    for k, v in zp_totals.items()
+                    if v > Decimal("0")
+                ]
             zrs_pool = [
                 {"id": zr.id, "wsl": zr.abs_wsl}
                 for zr in zrs
@@ -554,6 +586,7 @@ def calculo_conciliacion(fecha_inicio, fecha_fin):
         alloc["zp_belnr"] for allocs in augbl_allocations.values() for alloc in allocs
     }
 
+    # Segundo salto: buscar facturas compensadas por los ZPs
     segundo_salto_list = _fetch_fast_chunks(
         PartidaPosicion.objects.all(), "augbl", belnrs_primer_salto
     )
@@ -562,10 +595,34 @@ def calculo_conciliacion(fecha_inicio, fecha_fin):
         if pp.blart not in TIPOS_DOCUMENTO_BANCARIO:
             segundo_salto_por_belnr[pp.augbl].add(pp.belnr)
 
+    # Obtener líneas de las facturas del segundo salto para chequear gastos directos
+    belnrs_segundo_salto = {
+        b for bs in segundo_salto_por_belnr.values() for b in bs
+    }
+    lineas_segundo_salto = _fetch_fast_chunks(
+        PartidaPosicion.objects.all(), "partida__belnr", belnrs_segundo_salto
+    ) if belnrs_segundo_salto else []
+    segundo_salto_lineas_por_belnr: dict[str, list[FastPos]] = defaultdict(list)
+    for pp in lineas_segundo_salto:
+        segundo_salto_lineas_por_belnr[pp.belnr].append(pp)
+
     belnrs_origen_global: set[str] = set()
     for belnr_intermedio in belnrs_primer_salto:
-        if segundo_salto_por_belnr.get(belnr_intermedio):
-            belnrs_origen_global |= segundo_salto_por_belnr[belnr_intermedio]
+        facturas_2do = segundo_salto_por_belnr.get(belnr_intermedio, set())
+
+        if facturas_2do:
+            # Revisar si alguna factura del 2do salto contiene cuentas de gasto directo
+            tiene_gasto_directo = any(
+                linea.ractt in cuentas_gasto_directo
+                for f_belnr in facturas_2do
+                for linea in segundo_salto_lineas_por_belnr.get(f_belnr, [])
+            )
+            if tiene_gasto_directo:
+                # ⚡ Cortocircuito: Usar el ZP directamente, NO seguir al tercer nivel
+                del segundo_salto_por_belnr[belnr_intermedio]
+                belnrs_origen_global.add(belnr_intermedio)
+            else:
+                belnrs_origen_global |= facturas_2do
         else:
             belnrs_origen_global.add(belnr_intermedio)
 
@@ -600,7 +657,7 @@ def calculo_conciliacion(fecha_inicio, fecha_fin):
             return _traspaso_cache[cache_key]
 
         raccts_compensadas = {
-            pp.ractt for pp in partidas_por_augbl.get(augbl, []) if pp.bukrs == bukrs
+            pp.ractt for pp in partidas_por_augbl.get(augbl, [])
         }
         if not raccts_compensadas:
             _traspaso_cache[cache_key] = False
@@ -638,9 +695,44 @@ def calculo_conciliacion(fecha_inicio, fecha_fin):
         elif pos.ractt in cuentas_ingresos:
             tipo_operacion = "INGRESO"
         elif pos.ractt in cuentas_standalone:
-            tipo_operacion = "INGRESO" if pos.drcrk == "S" else "EGRESO"
+            # Verificar contrapartida: si es otra cuenta bancaria → traspaso
+            contrapartidas_doc = {
+                pp.ractt
+                for pp in partidas_por_augbl.get(pos.augbl, [])
+                if pp.belnr == pos.belnr and pp.ractt != pos.ractt
+            }
+            if contrapartidas_doc and contrapartidas_doc <= todas_las_cuentas_bancarias:
+                tipo_operacion = "TRASPASO"
+            else:
+                tipo_operacion = "INGRESO" if pos.drcrk == "S" else "EGRESO"
         else:
             tipo_operacion = "TRASPASO"
+
+        # ── Corrección por socio (reintegros) ─────────────────────────
+        # Si la cuenta dice INGRESO pero el augbl tiene proveedor (lifnr),
+        # es un reintegro → EGRESO.
+        # Si la cuenta dice EGRESO pero el augbl tiene cliente (kunnr),
+        # es un cobro a cliente → INGRESO.
+        if tipo_operacion in ("INGRESO", "EGRESO"):
+            belnrs_grupo = {
+                pp.belnr
+                for pp in partidas_por_augbl.get(pos.augbl, [])
+                if pp.bukrs == pos.bukrs
+            }
+            has_lifnr = any(
+                linea["lifnr"]
+                for b in belnrs_grupo
+                for linea in info_puente_por_belnr.get(b, [])
+            )
+            has_kunnr = any(
+                linea["kunnr"]
+                for b in belnrs_grupo
+                for linea in info_puente_por_belnr.get(b, [])
+            )
+            if has_lifnr and tipo_operacion == "INGRESO":
+                tipo_operacion = "EGRESO"  # Reintegro de proveedor
+            elif has_kunnr and tipo_operacion == "EGRESO":
+                tipo_operacion = "INGRESO"  # Cobro a cliente
 
         ref_banco = (pos.bktxt or pos.zuonr)[:50]
         allocations = augbl_allocations.get(pos.id, [])
@@ -667,6 +759,26 @@ def calculo_conciliacion(fecha_inicio, fecha_fin):
             continue
 
         if not allocations:
+            # FALLBACK: Si no hay emparejamiento, registramos el movimiento como SIN_CLASIFICAR
+            # para no perder la integridad del dashboard.
+            registros_dashboard.append(
+                DashboardConsolidado(
+                    tipo_operacion=tipo_operacion,
+                    categoria="SIN_CLASIFICAR",
+                    sub_categoria="SIN_CLASIFICAR",
+                    cuenta_contable=pos.ractt,
+                    cuenta_gasto="",
+                    monto_base=pos.abs_wsl,
+                    monto_total=pos.abs_wsl,
+                    rwcur=pos.rwcur,
+                    fecha_contabilizacion=pos.budat,
+                    documento_primario=pos.belnr,
+                    documento_secundario="",
+                    referencia=ref_banco,
+                    lifnr=pos.lifnr,
+                    kunnr=pos.kunnr,
+                )
+            )
             continue
 
         monto_extra = monto_extra_por_pos_id.get(pos.id, Decimal("0"))
@@ -702,6 +814,7 @@ def calculo_conciliacion(fecha_inicio, fecha_fin):
                 for linea in lineas_origen_completas.get(f, [])
                 if linea.bukrs == pos.bukrs
                 and linea.ractt not in _RACCTS_EXTRACCION_ESPECIAL
+                and linea.ractt not in todas_las_cuentas_bancarias
             ]
 
             lineas_acreedor_deudor = [l for l in lineas_origen if l.lifnr or l.kunnr]
@@ -732,12 +845,14 @@ def calculo_conciliacion(fecha_inicio, fecha_fin):
 
             if lineas_gasto_puro:
                 lineas_activas = lineas_gasto_puro
+            elif lineas_acreedor_deudor:
+                lineas_activas = lineas_acreedor_deudor
             elif lineas_no_mapeadas:
                 lineas_activas = lineas_no_mapeadas
             elif lineas_impuestos_comisiones:
+                if tipo_operacion == "INGRESO":
+                    continue  # Ignorar impuestos huérfanos en ingresos
                 lineas_activas = lineas_impuestos_comisiones
-            elif lineas_acreedor_deudor:
-                lineas_activas = lineas_acreedor_deudor
             elif lineas_dif_cambio:
                 lineas_activas = lineas_dif_cambio
             else:
@@ -771,7 +886,11 @@ def calculo_conciliacion(fecha_inicio, fecha_fin):
                 grp["ref1"] = ref1_real[:50]
 
                 if not grp["categoria"]:
-                    if cuenta_str in mapeo_gastos:
+                    if lifnr_real == "600093":
+                        grp["categoria"], grp["sub_categoria"] = _CATEGORIA_ESPECIAL[
+                            "IMPUESTO"
+                        ]
+                    elif cuenta_str in mapeo_gastos:
                         clf = mapeo_gastos[cuenta_str]
                         grp["categoria"], grp["sub_categoria"] = (
                             clf.categoria,
@@ -799,6 +918,9 @@ def calculo_conciliacion(fecha_inicio, fecha_fin):
                         else:
                             grp["categoria"] = grp["sub_categoria"] = "SIN_CLASIFICAR"
 
+            # Todos los montos positivos. El tipo_operacion indica la dirección.
+            signo_operacion = Decimal("1")
+
             items_prorrateo = list(agrupado.items())
             monto_acumulado = Decimal("0")
 
@@ -818,14 +940,17 @@ def calculo_conciliacion(fecha_inicio, fecha_fin):
                     )
                     monto_acumulado += monto_prorrateado
 
+                monto_final_con_signo = monto_prorrateado * signo_operacion
+                monto_base_con_signo = pos.abs_wsl * signo_operacion
+
                 kwargs_dashboard: dict = {
                     "tipo_operacion": tipo_operacion,
                     "categoria": grp["categoria"],
                     "sub_categoria": grp["sub_categoria"],
                     "cuenta_contable": pos.ractt,
                     "cuenta_gasto": cuenta_str,
-                    "monto_base": pos.abs_wsl,
-                    "monto_total": monto_prorrateado,
+                    "monto_base": monto_base_con_signo,
+                    "monto_total": monto_final_con_signo,
                     "rwcur": pos.rwcur,
                     "fecha_contabilizacion": pos.budat,
                     "documento_primario": pos.belnr,
@@ -853,6 +978,25 @@ def calculo_conciliacion(fecha_inicio, fecha_fin):
     n_dashboard = n_auditoria = 0
 
     if registros_dashboard:
+        # Deduplicar: múltiples augbls pueden generar el mismo registro
+        seen: set[tuple] = set()
+        registros_unicos: list[DashboardConsolidado] = []
+        for r in registros_dashboard:
+            key = (
+                r.documento_primario,
+                r.cuenta_gasto,
+                r.cuenta_contable,
+                r.monto_base,
+                r.lifnr,
+                r.kunnr,
+                r.tipo_operacion,
+                r.fecha_contabilizacion,
+            )
+            if key not in seen:
+                seen.add(key)
+                registros_unicos.append(r)
+        registros_dashboard = registros_unicos
+
         DashboardConsolidado.objects.bulk_create(registros_dashboard, batch_size=1000)
         n_dashboard = len(registros_dashboard)
 

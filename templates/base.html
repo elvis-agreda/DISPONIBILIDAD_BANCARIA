@@ -1,3 +1,4 @@
+{% load static %}
 <!DOCTYPE html>
 <html lang="es">
 <head>
@@ -27,50 +28,31 @@
         #sidebar {
             min-width: 250px;
             max-width: 250px;
-            background-color: #3c4295; /* Azul Institucional */
+            background-color: #1a5caa; /* Azul Institucional del logo */
             color: #fff;
             display: flex;
             flex-direction: column;
-            border-right: 4px solid #6eb43f; /* Línea verde */
+            border-right: 4px solid #4aaf46; /* Verde del logo */
             transition: all 0.3s ease-in-out; /* Animación suave */
             z-index: 1000;
         }
-        #sidebar ul li a {
-            padding: 12px 20px; /* 👈 Menos relleno para hacerlo compacto */
-            font-size: 0.9rem;  /* 👈 Letra más pequeña (antes era 1.05rem) */
-            display: block;
-            color: #e0e0e0;
-            text-decoration: none;
-            transition: all 0.3s;
-            border-left: 4px solid transparent;
-        }
-        /* ⚡ CLASE MÁGICA PARA OCULTAR EL MENÚ */
-        #sidebar.active {
-            margin-left: -250px;
-        }
-
-        #sidebar .sidebar-header {
-            padding: 20px;
-            background: rgba(0, 0, 0, 0.1);
-            text-align: center;
-        }
-        
-        #sidebar .sidebar-header h3 {
-            color: #fff;
-            margin: 0;
-            font-weight: bold;
-            font-size: 1.5rem;
-            letter-spacing: 1px;
-        }
-
         #sidebar ul.components {
             padding: 20px 0;
-            flex-grow: 1; /* Ocupa el espacio vacío empujando el usuario abajo */
+            flex-grow: 1;
+            overflow-y: auto;
+        }
+        
+        #sidebar ul.components::-webkit-scrollbar {
+            width: 5px;
+        }
+        #sidebar ul.components::-webkit-scrollbar-thumb {
+            background-color: rgba(255, 255, 255, 0.2);
+            border-radius: 4px;
         }
 
         #sidebar ul li a {
-            padding: 15px 25px;
-            font-size: 1.05rem;
+            padding: 12px 20px;
+            font-size: 0.95rem;
             display: block;
             color: #e0e0e0;
             text-decoration: none;
@@ -81,7 +63,25 @@
         #sidebar ul li a:hover {
             color: #fff;
             background: rgba(255, 255, 255, 0.1);
-            border-left: 4px solid #6eb43f; /* Indicador hover verde */
+            border-left: 4px solid #4aaf46;
+        }
+        /* ⚡ CLASE MÁGICA PARA OCULTAR EL MENÚ */
+        #sidebar.active {
+            margin-left: -250px;
+        }
+
+        #sidebar .sidebar-header {
+            padding: 15px;
+            background: #fff;
+            text-align: center;
+            border-bottom: 2px solid #e0e4e8;
+        }
+        
+        #sidebar .sidebar-header img {
+            max-width: 90%;
+            height: auto;
+            display: block;
+            margin: 0 auto;
         }
         .swal2-toast {
             font-size: 0.8rem !important; /* Letra más pequeña */
@@ -133,7 +133,7 @@
         /* Ajuste estético para el select oscuro */
         select.border-secondary:focus {
             box-shadow: none;
-            border-color: #6eb43f !important;
+            border-color: #4aaf46 !important;
         }
     </style>
 </head>
@@ -142,7 +142,7 @@
     <div class="wrapper">
         <nav id="sidebar" class="shadow active">
             <div class="sidebar-header">
-                <h3><i></i> Finanzas</h3>
+                <img src="{% static 'img/logo-centro-medico-docente-la-trinidad.svg' %}" alt="CMDLT Logo">
             </div>
 
             <ul class="list-unstyled components">
@@ -217,26 +217,65 @@
         // 👈 AÑADIR ESTA LÍNEA PARA HACERLO GLOBAL
         window.Toast = Toast; 
 
-        // 2. Función que va a la base de datos a preguntar si hay mensajes nuevos
-        function buscarNotificacionesGlobal() {
-            fetch('/api/notificaciones/')
-                .then(response => response.json())
-                .then(data => {
+        // 2. Sistema Reutilizable de Notificaciones Inteligente
+        class NotificationManager {
+            constructor(endpoint, intervalMs = 2000) {
+                this.endpoint = endpoint;
+                this.intervalMs = intervalMs;
+                this.intervalId = null;
+                
+                // Chequeo inicial automático al cargar la página
+                this.checkNow();
+            }
+
+            async checkNow() {
+                try {
+                    const response = await fetch(this.endpoint);
+                    if (!response.ok) return;
+                    const data = await response.json();
+                    
                     if (data.notificaciones && data.notificaciones.length > 0) {
                         data.notificaciones.forEach(notif => {
-                            // Disparamos el mensaje en pantalla
-                            Toast.fire({
-                                icon: notif.tipo, 
-                                title: notif.mensaje
-                            });
+                            if (window.Toast) {
+                                window.Toast.fire({ icon: notif.tipo, title: notif.mensaje });
+                            }
                         });
                     }
-                })
-                .catch(err => console.error("Error:", err));
+                    
+                    if (data.tareas_activas) {
+                        this.startPolling();
+                    } else {
+                        this.stopPolling();
+                    }
+                } catch (error) {
+                    console.error("Error consultando notificaciones:", error);
+                }
+            }
+
+            startPolling() {
+                if (!this.intervalId) {
+                    this.intervalId = setInterval(() => this.checkNow(), this.intervalMs);
+                }
+            }
+
+            stopPolling() {
+                if (this.intervalId) {
+                    clearInterval(this.intervalId);
+                    this.intervalId = null;
+                }
+            }
+
+            // Método que deben llamar otros scripts cuando inician un proceso largo
+            taskStarted() {
+                if (!this.intervalId) {
+                    this.checkNow();
+                    this.startPolling();
+                }
+            }
         }
 
-        buscarNotificacionesGlobal();
-        setInterval(buscarNotificacionesGlobal, 10000); 
+        // Instanciamos el sistema globalmente para poder usarlo desde cualquier archivo
+        window.notifSystem = new NotificationManager('/api/notificaciones/');
     });
 </script>
 </body>

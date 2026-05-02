@@ -188,6 +188,11 @@ class ClasificacionGasto(models.Model):
     sub_categoria = models.CharField(
         "Sub-Categoría (Ej. Servicios de IT)", max_length=100
     )
+    es_gasto_directo = models.BooleanField(
+        "Es Gasto Directo (No profundizar)",
+        default=False,
+        help_text="Si se marca, la conciliación se detendrá en esta cuenta al buscar el gasto (ej. para cuentas puente específicas como 212010401).",
+    )
 
     class Meta:
         verbose_name = "Mapeo de Gasto"

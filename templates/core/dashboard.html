@@ -84,7 +84,7 @@
 
     {% for bloque in matriz_final %}
         <div class="d-flex justify-content-between align-items-center mt-4 mb-2">
-            <h4 style="color: #1b5e20; font-weight: bold; border-bottom: 2px solid #6eb43f; padding-bottom: 5px;">
+            <h4 style="color: #1a5caa; font-weight: bold; border-bottom: 2px solid #4aaf46; padding-bottom: 5px;">
                 <i class="fas {% if vista_sel == 'SEPARADO' %}fa-layer-group{% else %}fa-globe{% endif %} me-2"></i> 
                 {% if vista_sel == 'SEPARADO' %}
                     Disponibilidad en {{ bloque.moneda }}
@@ -92,50 +92,60 @@
                     Disponibilidad Consolidada ( {{ bloque.moneda }} )
                 {% endif %}
             </h4>
+            <div class="btn-group btn-group-sm shadow-sm" role="group">
+                <input type="radio" class="btn-check" name="toggle_{{ forloop.counter }}" id="btn_all_{{ forloop.counter }}" autocomplete="off" checked onchange="filtrarTabla(this, 'ALL', '{{ forloop.counter }}')">
+                <label class="btn btn-outline-primary" for="btn_all_{{ forloop.counter }}">Todos</label>
+
+                <input type="radio" class="btn-check" name="toggle_{{ forloop.counter }}" id="btn_ing_{{ forloop.counter }}" autocomplete="off" onchange="filtrarTabla(this, 'INGRESO', '{{ forloop.counter }}')">
+                <label class="btn btn-outline-success" for="btn_ing_{{ forloop.counter }}">Ingresos</label>
+
+                <input type="radio" class="btn-check" name="toggle_{{ forloop.counter }}" id="btn_egr_{{ forloop.counter }}" autocomplete="off" onchange="filtrarTabla(this, 'EGRESO', '{{ forloop.counter }}')">
+                <label class="btn btn-outline-danger" for="btn_egr_{{ forloop.counter }}">Egresos</label>
+            </div>
         </div>
 
-        <div class="table-responsive shadow-sm rounded mb-4">
-            <table class="table table-bordered align-middle mb-0 main-table-moneda" style="font-size: 0.78rem;">
-                <thead class="text-white text-center" style="background-color: #3c4295;">
+        <div class="table-responsive shadow-sm bg-white rounded-3 mt-3" style="max-height: 75vh; overflow-y: auto;">
+            <table class="table table-bordered table-hover mb-0" style="font-size: 0.85rem;">
+                <thead class="text-center text-white" style="position: sticky; top: 0; z-index: 5;">
                     <tr>
-                        <th rowspan="3" class="align-middle text-start col-categoria">Categoría</th>
+                        <th rowspan="3" class="align-middle text-start col-categoria" style="min-width: 250px; max-width: 250px; white-space: normal; position: sticky; left: 0; z-index: 6; background-color: #1a5caa; border-color: #0d4282;">Categoría</th>
                         {% for semana in semanas %}
                             {% for dia in semana.dias %}
-                                <th class="py-1 week-{{ semana.id }}-col {% if not semana.tiene_hoy %}hidden-col{% endif %}">{{ dia.nombre_dia | upper }}</th>
+                                <th class="py-1 week-{{ semana.id }}-col {% if not semana.tiene_hoy %}hidden-col{% endif %}" style="background-color: #1a5caa; border-color: #0d4282;">{{ dia.nombre_dia | upper }}</th>
                             {% endfor %}
-                            <th rowspan="2" class="align-middle text-dark" style="background-color: #ffd700; min-width: 120px;">
+                            <th rowspan="2" class="align-middle text-dark" style="background-color: #ffd700; border-color: #d4b200; min-width: 120px;">
                                 Semana {{ semana.id }}
                                 <button class="btn-toggle-week" onclick="toggleSemana('{{ semana.id }}')">
                                     <i class="fas {% if semana.tiene_hoy %}fa-compress-arrows-alt{% else %}fa-expand-arrows-alt{% endif %} icon-week-{{ semana.id }}"></i>
                                 </button>
                             </th>
                         {% endfor %}
-                        <th rowspan="2" class="align-middle bg-success" style="min-width: 130px;">TOTAL MENSUAL</th>
+                        <th rowspan="2" class="align-middle text-white" style="background-color: #4aaf46; border-color: #3b8c37; min-width: 130px;">TOTAL MENSUAL</th>
                     </tr>
                     <tr>
                         {% for semana in semanas %}
                             {% for dia in semana.dias %}
-                                <th class="py-1 border-top-0 week-{{ semana.id }}-col {% if not semana.tiene_hoy %}hidden-col{% endif %}">{{ dia.numero_dia }}</th>
+                                <th class="py-1 border-top-0 week-{{ semana.id }}-col {% if not semana.tiene_hoy %}hidden-col{% endif %}" style="background-color: #1a5caa; border-color: #0d4282;">{{ dia.numero_dia }}</th>
                             {% endfor %}
                         {% endfor %}
                     </tr>
-                    <tr style="background-color: #f0f1f8; color: #3c4295;">
+                    <tr>
                         {% for semana in semanas %}
                             {% for dia in semana.dias %}
-                                <th class="py-0 small week-{{ semana.id }}-col {% if not semana.tiene_hoy %}hidden-col{% endif %}" style="font-size: 0.62rem; font-weight: normal; line-height: 1.3;">
-                                    <div class="text-primary fw-bold">USD: {{ dia.tasa_usd|formato_tasa }}</div>
-                                    <div class="text-success fw-bold">EUR: {{ dia.tasa_eur|formato_tasa }}</div>
+                                <th class="py-0 small week-{{ semana.id }}-col {% if not semana.tiene_hoy %}hidden-col{% endif %}" style="font-size: 0.62rem; font-weight: normal; line-height: 1.3; background-color: #f0f4f8; color: #1a5caa; border-color: #cdd6df;">
+                                    <div class="text-primary fw-bold" style="color: #1a5caa !important;">USD: {{ dia.tasa_usd|formato_tasa }}</div>
+                                    <div class="text-success fw-bold" style="color: #4aaf46 !important;">EUR: {{ dia.tasa_eur|formato_tasa }}</div>
                                 </th>
                             {% endfor %}
-                            <th class="col-semanal small">Acum.</th>
+                            <th class="col-semanal small" style="background-color: #f0f4f8; color: #1a5caa; border-color: #cdd6df;">Acum.</th>
                         {% endfor %}
-                        <th class="bg-success">Cierre</th>
+                        <th class="text-white" style="background-color: #4aaf46; border-color: #3b8c37;">Cierre</th>
                     </tr>
                 </thead>
                 <tbody>
                     {% for categoria, cat_data in bloque.categorias.items %}
-                    <tr>
-                        <td class="fw-bold col-categoria">{{ categoria }}</td>
+                    <tr class="fila-categoria" data-tipo="{{ cat_data.tipo_operacion|default:'' }}">
+                        <td class="fw-bold col-categoria" style="min-width: 250px; max-width: 250px; white-space: normal; position: sticky; left: 0; z-index: 4; background-color: white; box-shadow: inset -1px 0 0 #dee2e6; color: #1a5caa;">{{ categoria }}</td>
                         {% for semana in semanas %}
                             {% for dia in semana.dias %}
                                 <td class="text-end week-{{ semana.id }}-col {% if not semana.tiene_hoy %}hidden-col{% endif %}">
@@ -164,6 +174,90 @@
                     </tr>
                     {% endfor %}
                 </tbody>
+                <tfoot style="position: sticky; bottom: 0; z-index: 5; background-color: #f0f4f8; box-shadow: 0 -2px 5px rgba(0,0,0,0.1);">
+                    <tr id="totales_all_{{ forloop.counter }}">
+                        <td class="fw-bold text-end col-categoria text-uppercase" style="min-width: 250px; max-width: 250px; position: sticky; left: 0; z-index: 6; background-color: #1a5caa; color: white;">Disponibilidad Neta:</td>
+                        {% for semana in semanas %}
+                            {% for dia in semana.dias %}
+                                <td class="text-end fw-bold text-dark week-{{ semana.id }}-col {% if not semana.tiene_hoy %}hidden-col{% endif %}" style="background-color: #f0f4f8; border-color: #cdd6df;">
+                                    {% with valor=bloque.totales_netos_dias|get_val:dia.fecha_str %}
+                                        {% if valor is not None %}
+                                            <span class="{% if valor < 0 %}text-danger{% elif valor > 0 %}text-success{% endif %}">
+                                                {{ valor|formato_ve }}
+                                            </span>
+                                        {% else %}0,00{% endif %}
+                                    {% endwith %}
+                                </td>
+                            {% endfor %}
+                            <td class="text-end fw-bold col-semanal" style="background-color: #e2e8f0; border-color: #cdd6df;">
+                                {% with sem_id=semana.id|stringformat:"s" %}
+                                    {% with total_sem=bloque.totales_netos_semana|get_val:sem_id %}
+                                        {% if total_sem is not None %}
+                                            <span class="{% if total_sem < 0 %}text-danger{% elif total_sem > 0 %}text-success{% endif %}">
+                                                {{ total_sem|formato_ve }}
+                                            </span>
+                                        {% else %}0,00{% endif %}
+                                    {% endwith %}
+                                {% endwith %}
+                            </td>
+                        {% endfor %}
+                        <td class="text-end fw-bold col-mensual fs-6" style="background-color: #d1e7dd; border-color: #badbcc; color: #0f5132;">
+                            {{ bloque.total_neto_mes|formato_ve }}
+                        </td>
+                    </tr>
+                    <tr id="totales_ing_{{ forloop.counter }}" style="display: none;">
+                        <td class="fw-bold text-end col-categoria text-uppercase" style="min-width: 250px; max-width: 250px; position: sticky; left: 0; z-index: 6; background-color: #198754; color: white;">Total Ingresos:</td>
+                        {% for semana in semanas %}
+                            {% for dia in semana.dias %}
+                                <td class="text-end fw-bold text-dark week-{{ semana.id }}-col {% if not semana.tiene_hoy %}hidden-col{% endif %}" style="background-color: #e8f5e9; border-color: #cdd6df;">
+                                    {% with valor=bloque.totales_ingreso_dias|get_val:dia.fecha_str %}
+                                        {% if valor is not None %}
+                                            <span class="text-success">{{ valor|formato_ve }}</span>
+                                        {% else %}0,00{% endif %}
+                                    {% endwith %}
+                                </td>
+                            {% endfor %}
+                            <td class="text-end fw-bold col-semanal" style="background-color: #c8e6c9; border-color: #cdd6df;">
+                                {% with sem_id=semana.id|stringformat:"s" %}
+                                    {% with total_sem=bloque.totales_ingreso_semana|get_val:sem_id %}
+                                        {% if total_sem is not None %}
+                                            <span class="text-success">{{ total_sem|formato_ve }}</span>
+                                        {% else %}0,00{% endif %}
+                                    {% endwith %}
+                                {% endwith %}
+                            </td>
+                        {% endfor %}
+                        <td class="text-end fw-bold col-mensual fs-6" style="background-color: #a5d6a7; border-color: #81c784; color: #1b5e20;">
+                            {{ bloque.total_ingreso_mes|formato_ve }}
+                        </td>
+                    </tr>
+                    <tr id="totales_egr_{{ forloop.counter }}" style="display: none;">
+                        <td class="fw-bold text-end col-categoria text-uppercase" style="min-width: 250px; max-width: 250px; position: sticky; left: 0; z-index: 6; background-color: #dc3545; color: white;">Total Egresos:</td>
+                        {% for semana in semanas %}
+                            {% for dia in semana.dias %}
+                                <td class="text-end fw-bold text-dark week-{{ semana.id }}-col {% if not semana.tiene_hoy %}hidden-col{% endif %}" style="background-color: #fce4e4; border-color: #cdd6df;">
+                                    {% with valor=bloque.totales_egreso_dias|get_val:dia.fecha_str %}
+                                        {% if valor is not None %}
+                                            <span class="text-danger">{{ valor|formato_ve }}</span>
+                                        {% else %}0,00{% endif %}
+                                    {% endwith %}
+                                </td>
+                            {% endfor %}
+                            <td class="text-end fw-bold col-semanal" style="background-color: #f8d7da; border-color: #cdd6df;">
+                                {% with sem_id=semana.id|stringformat:"s" %}
+                                    {% with total_sem=bloque.totales_egreso_semana|get_val:sem_id %}
+                                        {% if total_sem is not None %}
+                                            <span class="text-danger">{{ total_sem|formato_ve }}</span>
+                                        {% else %}0,00{% endif %}
+                                    {% endwith %}
+                                {% endwith %}
+                            </td>
+                        {% endfor %}
+                        <td class="text-end fw-bold col-mensual fs-6" style="background-color: #f5c2c7; border-color: #ea868f; color: #842029;">
+                            {{ bloque.total_egreso_mes|formato_ve }}
+                        </td>
+                    </tr>
+                </tfoot>
             </table>
         </div>
     {% empty %}
@@ -175,9 +269,9 @@
 </div>
 
 <div class="modal fade" id="drillDownModal" tabindex="-1" aria-hidden="true">
-  <div class="modal-dialog modal-xl">
+  <div class="modal-dialog modal-dialog-centered" style="max-width: fit-content; min-width: 60%;">
     <div class="modal-content shadow-lg">
-      <div class="modal-header text-white" style="background-color: #3c4295;">
+      <div class="modal-header text-white" style="background-color: #1a5caa;">
         <h5 class="modal-title">
             Detalle de Asientos - <span id="dd-titulo"></span>
         </h5>
@@ -281,7 +375,10 @@
         mostrarToast("'Iniciando sincronización con SAP...'", 'primary');
         fetch("{% url 'sync_manual' %}", {
             method: "POST", headers: {"Content-Type": "application/json", "X-CSRFToken": "{{ csrf_token }}"}, body: JSON.stringify({ fecha_inicio: start, fecha_fin: end })
-        }).then(res => res.json()).then(data => mostrarToast(data.status || "'Sincronización ejecutada con éxito'", 'success')).catch(err => mostrarToast("'Error al conectar con el servidor'", 'error'));
+        }).then(res => res.json()).then(data => {
+            mostrarToast(data.status || "'Sincronización en proceso'", 'success');
+            if(window.notifSystem) window.notifSystem.taskStarted();
+        }).catch(err => mostrarToast("'Error al conectar con el servidor'", 'error'));
     }
 
     function iniciarPaso8() {
@@ -294,7 +391,13 @@
         mostrarToast(`Iniciando recálculo del mes de ${start.substring(0,7)}...`, 'primary');
         fetch("{% url 'sync_paso8' %}", {
             method: "POST", headers: {"Content-Type": "application/json", "X-CSRFToken": "{{ csrf_token }}"}, body: JSON.stringify({ fecha_inicio: start, fecha_fin: end })
-        }).then(res => res.json()).then(data => { if (data.error) mostrarToast(data.error, 'error'); else mostrarToast(data.status, 'success'); }).catch(err => mostrarToast("'Error'", 'error'));
+        }).then(res => res.json()).then(data => { 
+            if (data.error) mostrarToast(data.error, 'error'); 
+            else {
+                mostrarToast(data.status, 'success'); 
+                if(window.notifSystem) window.notifSystem.taskStarted();
+            }
+        }).catch(err => mostrarToast("'Error'", 'error'));
     }
 
     // ==========================================
@@ -357,12 +460,14 @@
         const url = `{% url 'detalle_asientos_api' %}?categoria=${encodeURIComponent(currentCategoria)}&moneda=${encodeURIComponent(currentMoneda)}&fecha=${currentFecha}&vista=${currentVista}&page=${currentPage}&search=${encodeURIComponent(currentSearch)}&sort=${ddSortCampo}&order=${ddSortOrder}`;
         
         fetch(url).then(res => res.json()).then(data => {
-            thead.innerHTML = '';
+            let trHead = '<tr>';
             data.columnas.forEach(col => {
                 let icon = '<i class="fas fa-sort ms-2" style="color: rgba(255,255,255,0.4);"></i>';
                 if (ddSortCampo === col.campo) icon = ddSortOrder === 'asc' ? '<i class="fas fa-sort-up ms-2 text-warning"></i>' : '<i class="fas fa-sort-down ms-2 text-warning"></i>';
-                thead.innerHTML += `<th class="text-center text-nowrap th-sortable" onclick="ordenarDrillDown('${col.campo}')">${col.etiqueta}${icon}</th>`;
+                trHead += `<th class="text-center text-nowrap th-sortable" onclick="ordenarDrillDown('${col.campo}')">${col.etiqueta}${icon}</th>`;
             });
+            trHead += '</tr>';
+            thead.innerHTML = trHead;
             
             tbody.innerHTML = '';
             if(data.datos.length === 0) {
@@ -380,7 +485,8 @@
 
                 const tr = document.createElement('tr');
                 data.columnas.forEach(col => {
-                    let valor = row[col.campo] || '-';
+                    let rawVal = row[col.campo];
+                    let valor = (rawVal !== null && rawVal !== undefined && rawVal !== "") ? rawVal : '-';
                     let celdaHtml = `<td class="text-center">-</td>`;
 
                     if (valor !== '-') {
@@ -398,6 +504,8 @@
                                 });
 
                                 celdaHtml = `<td class="text-center" style="max-width: 320px; white-space: normal; word-wrap: break-word; line-height: 1.3;">${linkified}</td>`;
+                            } else {
+                                celdaHtml = `<td class="text-center" style="max-width: 320px; white-space: normal; word-wrap: break-word; line-height: 1.3;">${valor}</td>`;
                             }
                         }
                     }
@@ -459,12 +567,14 @@
     function pintarTablaSap() {
         const thead = document.getElementById('doc-sap-head'), tbody = document.getElementById('doc-sap-body');
         const columnasSap = [{ id: 'belnr', nombre: 'Doc. SAP' }, { id: 'pos', nombre: 'Pos' }, { id: 'socio', nombre: 'Socio' }, { id: 'cuenta', nombre: 'Cuenta' }, { id: 'monto', nombre: 'Monto' }, { id: 'moneda', nombre: 'Mon' }, { id: 'dh', nombre: 'D/H' }, { id: 'referencia', nombre: 'Referencia' }, { id: 'compensacion', nombre: 'Comp.' }];
-        thead.innerHTML = '';
+        let trSap = '<tr>';
         columnasSap.forEach(col => {
             let icon = '<i class="fas fa-sort ms-2" style="color: rgba(255,255,255,0.4);"></i>';
             if (sapSortCampo === col.id) icon = sapSortOrder === 'asc' ? '<i class="fas fa-sort-up ms-2 text-warning"></i>' : '<i class="fas fa-sort-down ms-2 text-warning"></i>';
-            thead.innerHTML += `<th class="text-center text-nowrap th-sortable" onclick="ordenarSap('${col.id}')">${col.nombre}${icon}</th>`;
+            trSap += `<th class="text-center text-nowrap th-sortable" style="position: sticky; top: 0; z-index: 1;" onclick="ordenarSap('${col.id}')">${col.nombre}${icon}</th>`;
         });
+        trSap += '</tr>';
+        thead.innerHTML = trSap;
         tbody.innerHTML = '';
         if(sapDataOriginal.length === 0) { tbody.innerHTML = `<tr><td colspan="9" class="text-center text-muted py-4">Sin datos.</td></tr>`; document.getElementById('doc-totales-badges').innerHTML = ''; return; }
         let totalesMoneda = {};
@@ -481,6 +591,32 @@
             partesBalance.push(`<span class="ms-4" style="color: ${textColor};">${mon} <span class="fw-bold fs-5">${formatter.format(tot)}</span></span>`);
         }
         document.getElementById('doc-totales-badges').innerHTML = partesBalance.join('');
+        document.querySelector('.modal-dialog').classList.add('modal-xl');
+    }
+
+    function filtrarTabla(radioBtn, tipo, counter) {
+        const tableDiv = radioBtn.closest('.d-flex').nextElementSibling;
+        const filas = tableDiv.querySelectorAll('tbody tr.fila-categoria');
+        
+        filas.forEach(fila => {
+            if (tipo === 'ALL' || fila.getAttribute('data-tipo') === tipo) {
+                fila.style.display = '';
+            } else {
+                fila.style.display = 'none';
+            }
+        });
+        
+        const trAll = tableDiv.querySelector('#totales_all_' + counter);
+        const trIng = tableDiv.querySelector('#totales_ing_' + counter);
+        const trEgr = tableDiv.querySelector('#totales_egr_' + counter);
+        
+        if(trAll) trAll.style.display = 'none';
+        if(trIng) trIng.style.display = 'none';
+        if(trEgr) trEgr.style.display = 'none';
+
+        if (tipo === 'ALL' && trAll) trAll.style.display = '';
+        else if (tipo === 'INGRESO' && trIng) trIng.style.display = '';
+        else if (tipo === 'EGRESO' && trEgr) trEgr.style.display = '';
     }
 </script>
 {% endblock %}

@@ -32,7 +32,7 @@ class SAPServiceURL:
     ENTIDADES = f"{URL_BASE}:{SAP_PORT}/sap/opu/odata/sap/ZFI_ACREEDORES_DEUDORES_CDS"
     # FMCall Endpoints
     TASA_BCV = f"{URL_BASE}:{SAP_PORT}/fmcall/ZFI_TASA_BCV"
-    USER_TCODE_CHECK = f"{URL_BASE}:{SAP_PORT}/fmcall/ZHTTP_CHECK_USER_INFO"
+    CHECK_USER_INFO = f"{URL_BASE}:{SAP_PORT}/fmcall/ZHTTP_CHECK_USER_INFO"
 
 
 # ── Cliente OData V2 principal ──────────────────────────────────────────────

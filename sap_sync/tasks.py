@@ -60,6 +60,10 @@ def ejecutar_sync_sap(
                 mensaje=f"Sincronización SAP ({fecha_inicio} al {fecha_fin}) completada.",
                 tipo="success",
             )
+            
+        log.refresh_from_db(fields=["errores_count"])
+        estado_final = "PARCIAL" if log.errores_count > 0 else "EXITOSO"
+        log.marcar_finalizado(estado_final)
     except InterruptedError as exc:
         log.registrar_error(paso=0, mensaje=str(exc))
         log.marcar_finalizado("CANCELADO")
@@ -96,10 +100,19 @@ def ejecutar_paso8_manual(fecha_inicio: date, fecha_fin: date, usuario_id):
     orchestrator = SAPSyncOrchestrator(log)
     try:
         orchestrator.paso8_calculo_disponibilidad(fecha_inicio, fecha_fin)
+        
+        log.registrar_inicio_paso("paso9", "Maestros de Acreedores y Deudores")
+        n_entidades = orchestrator._paso9_entidades_contables(fecha_inicio, fecha_fin)
+        log.registrar_fin_paso(
+            "paso9",
+            {"entidades_procesadas": n_entidades},
+            estado="EXITOSO" if log.errores_count == 0 else "PARCIAL",
+        )
+
         if usuario_id:
             Notificacion.objects.create(
                 usuario_id=usuario_id,
-                mensaje="Cálculo de Disponibilidad (Paso 8) finalizado con éxito.",
+                mensaje="Cálculo de Disponibilidad y Entidades finalizado con éxito.",
                 tipo="success",
             )
         log.marcar_finalizado("EXITOSO")
@@ -114,7 +127,7 @@ def ejecutar_paso8_manual(fecha_inicio: date, fecha_fin: date, usuario_id):
         if usuario_id:
             Notificacion.objects.create(
                 usuario_id=usuario_id,
-                mensaje=f"Error en Paso 8: {str(exc)}",
+                mensaje=f"Error en reprocesamiento: {str(exc)}",
                 tipo="error",
             )
         raise
@@ -137,6 +150,17 @@ def reintentar_sincronizacion(log_id: int):
     try:
         anio_seguro = log.anio or str(log.fecha_inicio.year)
         orchestrator.ejecutar_reintento(log.fecha_inicio, log.fecha_fin, anio_seguro)
+        
+        if log.usuario_id:
+            Notificacion.objects.create(
+                usuario_id=log.usuario_id,
+                mensaje=f"Reintento de Sincronización SAP completado.",
+                tipo="success",
+            )
+            
+        log.refresh_from_db(fields=["errores_count"])
+        estado_final = "PARCIAL" if log.errores_count > 0 else "EXITOSO"
+        log.marcar_finalizado(estado_final)
     except InterruptedError as exc:
         log.registrar_error(paso=0, mensaje=str(exc))
         log.marcar_finalizado("CANCELADO")

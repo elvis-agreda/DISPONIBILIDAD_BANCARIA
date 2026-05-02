@@ -1042,29 +1042,38 @@ class SAPSyncOrchestrator:
         self.log.registrar_inicio_paso(
             "paso8", "Conciliación y Cálculo de Disponibilidad"
         )
+        self.log.actualizar_progreso_paso("paso8", "Iniciando motor de cálculo de conciliación...")
         from sap_sync.utils.conciliation.calculo import calculo_conciliacion
 
         calculo_conciliacion(fecha_inicio, fecha_fin)
 
+        self.log.actualizar_progreso_paso("paso8", "Cálculo de conciliación finalizado correctamente.")
+        self.log.registrar_fin_paso(
+            "paso8",
+            {"fechas_calculadas": f"{fecha_inicio} al {fecha_fin}"},
+            estado="EXITOSO",
+        )
+
     def _paso9_entidades_contables(self, fecha_inicio, fecha_fin) -> int:
         from sap_sync.models import EntidadContable
 
-        # 1. Obtener códigos únicos de proveedores y clientes en el rango de fechas
-        posiciones = PartidaPosicion.objects.filter(
-            partida__budat__range=[fecha_inicio, fecha_fin]
-        ).values_list("lifnr", "kunnr")
+        self.log.actualizar_progreso_paso("paso9", "Extrayendo códigos únicos de proveedores y clientes de la base de datos...")
+
+        lifnrs = set(PartidaPosicion.objects.exclude(lifnr__isnull=True).exclude(lifnr="").values_list("lifnr", flat=True).distinct())
+        kunnrs = set(PartidaPosicion.objects.exclude(kunnr__isnull=True).exclude(kunnr="").values_list("kunnr", flat=True).distinct())
 
         codigos_unicos = set()
-        for lifnr, kunnr in posiciones:
-            if lifnr:
-                codigos_unicos.add(lifnr.strip())
-            if kunnr:
-                codigos_unicos.add(kunnr.strip())
+        for l in lifnrs:
+            if l.strip(): codigos_unicos.add(l.strip())
+        for k in kunnrs:
+            if k.strip(): codigos_unicos.add(k.strip())
 
         if not codigos_unicos:
+            self.log.actualizar_progreso_paso("paso9", "No se encontraron códigos para procesar.")
             return 0
 
-        # 2. Filtrar los que ya tenemos para no re-consultar innecesariamente
+        self.log.actualizar_progreso_paso("paso9", f"Buscando {len(codigos_unicos)} códigos en el maestro local para descartar existentes...")
+
         existentes = set(
             EntidadContable.objects.filter(codigo__in=codigos_unicos).values_list(
                 "codigo", flat=True
@@ -1073,22 +1082,23 @@ class SAPSyncOrchestrator:
 
         faltantes = list(codigos_unicos - existentes)
         if not faltantes:
+            self.log.actualizar_progreso_paso("paso9", "Todos los códigos ya existen localmente. No se requiere consulta a SAP.")
             return 0
 
-        # 3. Consultar a SAP en lotes usando OData filters
+        self.log.actualizar_progreso_paso("paso9", f"Consultando {len(faltantes)} entidades faltantes en SAP vía OData en lotes...")
+
         client = SAPODataClient(base_url=SAPServiceURL.ENTIDADES)
         filtros_odata = []
-        for chunk in _chunked_list(faltantes, 20):
-            partes_or = [f"Codigo eq '{cod}'" for cod in chunk]
-            filtros_odata.append(" or ".join(partes_or))
+        for chunk in _chunked_list(faltantes, 10):
+            # Escapamos comillas simples duplicándolas (requerimiento OData)
+            partes_or = [f"Codigo eq '{cod.replace(chr(39), chr(39)*2)}'" for cod in chunk]
+            filtros_odata.append([" or ".join(partes_or)])
 
         def cb_entidades(registros):
             mapper = GeneradorDinamicoSAP("EntidadContable")
             count = 0
             for rec in registros:
                 kwargs = mapper.construir_kwargs(rec)
-                # Aplicamos la lógica: Guardar único si son iguales, por separado si no.
-                # Al usar update_or_create con (codigo, tipo), Django lo resuelve solo.
                 EntidadContable.objects.update_or_create(
                     codigo=kwargs["codigo"],
                     tipo=kwargs["tipo"],
@@ -1112,4 +1122,6 @@ class SAPSyncOrchestrator:
             paso_id="paso9",
         )
 
-        return sum(resultados) if resultados else 0
+        total_guardados = sum(resultados) if resultados else 0
+        self.log.actualizar_progreso_paso("paso9", f"Finalizado: Se descargaron y guardaron {total_guardados} entidades desde SAP.")
+        return total_guardados

@@ -10,7 +10,7 @@ from django.utils import timezone
 from django.views.decorators.http import require_POST
 
 from core.models import ColumnaDrillDown, DashboardConsolidado, Notificacion
-from sap_sync.models import PartidaPosicion, TasaBCV
+from sap_sync.models import PartidaPosicion, TasaBCV, EntidadContable, SincronizacionLog
 from sap_sync.tasks import ejecutar_paso8_manual, ejecutar_sync_sap
 
 
@@ -23,7 +23,10 @@ def leer_notificaciones_api(request):
         data.append({"id": n.id, "mensaje": n.mensaje, "tipo": n.tipo})
 
     nots.update(leida=True)
-    return JsonResponse({"notificaciones": data})
+    
+    tareas_activas = SincronizacionLog.objects.filter(estado__in=["INICIADO", "EN_CURSO"]).exists()
+    
+    return JsonResponse({"notificaciones": data, "tareas_activas": tareas_activas})
 
 
 @login_required
@@ -118,6 +121,7 @@ def dashboard_view(request):
                 "total_mes": 0.0,
                 "categoria_base": cat_base,
                 "moneda": llave_destino,
+                "tipo_operacion": reg.tipo_operacion,
             }
 
         matriz_por_moneda[llave_destino][cat_base]["dias"][fecha_str] = (
@@ -171,7 +175,56 @@ def dashboard_view(request):
             k: matriz_por_moneda[moneda][k]
             for k in sorted(matriz_por_moneda[moneda].keys())
         }
-        matriz_final.append({"moneda": moneda, "categorias": categorias_ordenadas})
+        
+        totales_netos_dias = {}
+        totales_netos_semana = {}
+        total_neto_mes = 0.0
+        
+        totales_ingreso_dias = {}
+        totales_ingreso_semana = {}
+        total_ingreso_mes = 0.0
+
+        totales_egreso_dias = {}
+        totales_egreso_semana = {}
+        total_egreso_mes = 0.0
+        
+        for cat_data in categorias_ordenadas.values():
+            is_ingreso = cat_data.get("tipo_operacion") == "INGRESO"
+            sign = 1 if is_ingreso else -1
+            
+            for dia, monto in cat_data["dias"].items():
+                totales_netos_dias[dia] = totales_netos_dias.get(dia, 0.0) + (monto * sign)
+                if is_ingreso:
+                    totales_ingreso_dias[dia] = totales_ingreso_dias.get(dia, 0.0) + monto
+                else:
+                    totales_egreso_dias[dia] = totales_egreso_dias.get(dia, 0.0) + monto
+                
+            for sem, monto in cat_data["totales_semana"].items():
+                totales_netos_semana[sem] = totales_netos_semana.get(sem, 0.0) + (monto * sign)
+                if is_ingreso:
+                    totales_ingreso_semana[sem] = totales_ingreso_semana.get(sem, 0.0) + monto
+                else:
+                    totales_egreso_semana[sem] = totales_egreso_semana.get(sem, 0.0) + monto
+                
+            total_neto_mes += (cat_data["total_mes"] * sign)
+            if is_ingreso:
+                total_ingreso_mes += cat_data["total_mes"]
+            else:
+                total_egreso_mes += cat_data["total_mes"]
+
+        matriz_final.append({
+            "moneda": moneda, 
+            "categorias": categorias_ordenadas,
+            "totales_netos_dias": totales_netos_dias,
+            "totales_netos_semana": totales_netos_semana,
+            "total_neto_mes": total_neto_mes,
+            "totales_ingreso_dias": totales_ingreso_dias,
+            "totales_ingreso_semana": totales_ingreso_semana,
+            "total_ingreso_mes": total_ingreso_mes,
+            "totales_egreso_dias": totales_egreso_dias,
+            "totales_egreso_semana": totales_egreso_semana,
+            "total_egreso_mes": total_egreso_mes,
+        })
 
     meses_lista = [
         (1, "Enero"),
@@ -292,6 +345,29 @@ def detalle_asientos_api(request):
     end = start + per_page
     asientos = list(qs.values(*campos_para_query)[start:end])
 
+    # Enriquecer con nombres de EntidadContable
+    codigos_socio = set()
+    for row in asientos:
+        if row.get("lifnr"):
+            codigos_socio.add(row["lifnr"])
+        if row.get("kunnr"):
+            codigos_socio.add(row["kunnr"])
+
+    if codigos_socio:
+        entidades = EntidadContable.objects.filter(codigo__in=codigos_socio)
+        nombres_socio = {e.codigo: e.nombre for e in entidades}
+        for row in asientos:
+            if row.get("lifnr"):
+                codigo = row["lifnr"]
+                nombre = nombres_socio.get(codigo) or nombres_socio.get(codigo.lstrip("0"))
+                if nombre:
+                    row["lifnr"] = f"{codigo} - {nombre}"
+            if row.get("kunnr"):
+                codigo = row["kunnr"]
+                nombre = nombres_socio.get(codigo) or nombres_socio.get(codigo.lstrip("0"))
+                if nombre:
+                    row["kunnr"] = f"{codigo} - {nombre}"
+
     pages = (total_records // per_page) + (1 if total_records % per_page > 0 else 0)
 
     return JsonResponse(
@@ -324,8 +400,24 @@ def detalle_documento_api(request):
             .order_by("docln")
         )
 
+    codigos_socio = set()
+    for pos in posiciones:
+        if pos.lifnr:
+            codigos_socio.add(pos.lifnr)
+        if pos.kunnr:
+            codigos_socio.add(pos.kunnr)
+            
+    nombres_socio = {}
+    if codigos_socio:
+        entidades = EntidadContable.objects.filter(codigo__in=codigos_socio)
+        nombres_socio = {e.codigo: e.nombre for e in entidades}
+
     datos = []
     for pos in posiciones:
+        codigo_socio = pos.lifnr or pos.kunnr or ""
+        nombre_socio = nombres_socio.get(codigo_socio) or nombres_socio.get(codigo_socio.lstrip("0")) if codigo_socio else ""
+        socio_display = f"{codigo_socio} - {nombre_socio}" if nombre_socio else codigo_socio
+        
         datos.append(
             {
                 "belnr": pos.partida.belnr,
@@ -336,7 +428,7 @@ def detalle_documento_api(request):
                 "dh": pos.drcrk or "",
                 "referencia": pos.zuonr or "",
                 "compensacion": pos.augbl or "",
-                "socio": pos.lifnr or pos.kunnr or "",
+                "socio": socio_display,
             }
         )
 

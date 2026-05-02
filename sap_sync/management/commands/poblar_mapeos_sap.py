@@ -2,7 +2,7 @@ from django.core.management.base import BaseCommand
 
 from core.models import ClasificacionGasto, ColumnaDrillDown
 from sap_sync.models import CuentaConfiguracion, MapeoCampo
-from users.models import TransaccionSAP
+from users.models import RolSAP
 
 
 class Command(BaseCommand):
@@ -18,19 +18,21 @@ class Command(BaseCommand):
 
         cuentas_iniciales = [
             ("117010100", "IMPUESTO", "I.V.A CREDITO FISCAL"),
+            ("117010200", "IMPUESTO", "I.V.A RETENIDO POR TERCEROS"),
+            ("215010100", "IMPUESTO", "I.V.A DEBITO FISCAL"),
+            ("117010300", "IMPUESTO", "ISLR RETENIDO POR TERCEROS"),
             ("213010400", "IMPUESTO", "ISLR RET A EMPLEADOS"),
             ("213010500", "IMPUESTO", "ISLR RET A TERCEROS"),
             ("213010600", "IMPUESTO", "RETENCION IVA A TERCEROS"),
             ("213011100", "IMPUESTO", "PERCEPCION IGTF"),
-            ("525010104", "IMPUESTO", "IMPUESTOS TRANSACCIONES FINANCIERAS"),
             ("411050117", "DIF_CAMBIO", "GANANCIA EN CAMBIO"),
             ("526010102", "DIF_CAMBIO", "PERDIDA EN CAMBIO"),
             ("525010103", "COMISION", "COMISIONES BANCARIAS"),
+            ("525010104", "IMPUESTO", "IMPUESTOS TRANSACCIONES FINANCIERAS"),
         ]
 
         cuentas_creadas = 0
         for cuenta, tipo, descripcion in cuentas_iniciales:
-            # ⚡ FIX: Solo crea, nunca actualiza
             obj, created = CuentaConfiguracion.objects.get_or_create(
                 cuenta=cuenta,
                 defaults={"tipo": tipo, "descripcion": descripcion, "activa": True},
@@ -115,10 +117,6 @@ class Command(BaseCommand):
                 "INVENTARIO MATERIALES Y ARTICULOS DE LIMPIEZA",
                 "INVENTARIO MATERIALES Y ARTICULOS DE LIMPIEZA",
             ),
-            ("116010400", "ISLR PREPAGADO", "ISLR PREPAGADO"),
-            ("117010100", "I.V.A CREDITO FISCAL", "I.V.A CREDITO FISCAL"),
-            ("117010200", "I.V.A RETENIDO POR TERCEROS", "I.V.A RETENIDO POR TERCEROS"),
-            ("117010300", "ISLR RETENIDO POR TERCEROS", "ISLR RETENIDO POR TERCEROS"),
             (
                 "119011101",
                 "ACTIVOS Y OBRAS EN PROCESO TRANSITO",
@@ -176,10 +174,6 @@ class Command(BaseCommand):
                 "RETENCION POLITICA HABITACIONAL",
                 "RETENCION POLITICA HABITACIONAL",
             ),
-            ("213010400", "ISLR RETENIDO A EMPLEADOS", "ISLR RETENIDO A EMPLEADOS"),
-            ("213010500", "ISLR RETENIDO A TERCEROS", "ISLR RETENIDO A TERCEROS"),
-            ("213010600", "RETENCION IVA A TERCEROS", "RETENCION IVA A TERCEROS"),
-            ("213011100", "PERCEPCION IGTF", "PERCEPCION IGTF"),
             ("214010100", "NOMINA ACUMULADA POR PAGAR", "NOMINA ACUMULADA POR PAGAR"),
             (
                 "214010101",
@@ -205,7 +199,6 @@ class Command(BaseCommand):
             ),
             ("214010700", "BONO VACACIONAL", "BONO VACACIONAL"),
             ("214010800", "BONO FIN DE AÑO", "BONO FIN DE AÑO"),
-            ("215010100", "I.V.A DEBITO FISCAL", "I.V.A DEBITO FISCAL"),
             (
                 "216010100",
                 "PROVISION CUENTAS POR PAGAR COMERCIALES",
@@ -340,7 +333,6 @@ class Command(BaseCommand):
                 "APORTE ASIST.SERV.MEDICOS EXTRAMURO",
                 "APORTE ASIST.SERV.MEDICOS EXTRAMURO",
             ),
-            ("411050117", "GANANCIA EN CAMBIO", "GANANCIA EN CAMBIO"),
             ("411050118", "OTROS INGRESOS", "OTROS INGRESOS"),
             (
                 "411050119",
@@ -509,14 +501,7 @@ class Command(BaseCommand):
             ("523010102", "COSTOS MTTO. INTERNO", "COSTOS MTTO. INTERNO"),
             ("525010101", "GASTOS INTERES BANCARIO", "GASTOS INTERES BANCARIO"),
             ("525010102", "GASTOS POR INTERESES", "GASTOS POR INTERESES"),
-            ("525010103", "COMISIONES BANCARIAS", "COMISIONES BANCARIAS"),
-            (
-                "525010104",
-                "IMPUESTOS TRANSACCIONES FINANCIERAS",
-                "IMPUESTOS TRANSACCIONES FINANCIERAS",
-            ),
             ("526010101", "DESCUENTO POR PRONTO PAGO", "DESCUENTO POR PRONTO PAGO"),
-            ("526010102", "PERDIDA EN CAMBIO", "PERDIDA EN CAMBIO"),
             (
                 "526010104",
                 "PERDIDA DESINCORPORACION.ACTIVO",
@@ -648,25 +633,22 @@ class Command(BaseCommand):
                 mapeos_creados += 1
 
         # -------------------------------------------------------------------
-        # 3. CARGA DE ROLES POR TRANSACCIÓN
+        # 3. CARGA DE ROLES SAP
         # -------------------------------------------------------------------
-        self.stdout.write("Cargando Configuración de Roles por Transacción...")
+        self.stdout.write("Cargando Configuración de Roles SAP...")
 
-        transacciones_iniciales = [
-            ("SE16N", "ADMINISTRADOR", 10),
-            ("FBL1N", "ANALISTA", 5),
-            ("FBL3N", "ANALISTA", 5),
-            ("VF01", "AUDITOR", 1),
-            ("FB03", "AUDITOR", 1),
+        roles_iniciales = [
+            ("ZNWC_ABAPDEVELOPER", "ADMINISTRADOR", 10),
         ]
 
-        transacciones_creadas = 0
-        for tcode, rol, jerarquia in transacciones_iniciales:
-            obj, created = TransaccionSAP.objects.get_or_create(
-                tcode=tcode, defaults={"rol_asociado": rol, "jerarquia": jerarquia}
+        roles_creados = 0
+        for rol_sap, rol_django, jerarquia in roles_iniciales:
+            obj, created = RolSAP.objects.get_or_create(
+                rol_sap=rol_sap, defaults={"rol_django": rol_django, "jerarquia": jerarquia}
             )
             if created:
-                transacciones_creadas += 1
+                roles_creados += 1
+
 
         # -------------------------------------------------------------------
         # 4. CARGA DE COLUMNAS PARA EL DRILL-DOWN (NUEVO)
@@ -687,7 +669,7 @@ class Command(BaseCommand):
 
         columnas_creadas = 0
         for campo, etiqueta, tipo, orden, buscable, abre in columnas_drilldown:
-            obj, created = ColumnaDrillDown.objects.get_or_create(
+            obj, created = ColumnaDrillDown.objects.update_or_create(
                 campo_bd=campo,
                 defaults={
                     "etiqueta": etiqueta,
@@ -707,7 +689,7 @@ class Command(BaseCommand):
                 f"Finalizado: {cuentas_creadas} cuentas | "
                 f"{gastos_creados} Mapeos de Gasto | "
                 f"{mapeos_creados} mapeos SAP | "
-                f"{transacciones_creadas} roles | "
+                f"{roles_creados} roles SAP | "
                 f"{columnas_creadas} columnas drill-down."
             )
         )
