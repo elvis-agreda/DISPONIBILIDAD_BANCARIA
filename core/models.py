@@ -81,7 +81,8 @@ class DashboardConsolidado(models.Model):
         "Sub Categoría", max_length=50, blank=True, null=True
     )
 
-    cuenta_contable = models.CharField("Cuenta Bancaria", max_length=50, db_index=True)
+    cuenta_real = models.CharField("Cuenta Real", max_length=50, db_index=True)
+    cuenta_transitoria = models.CharField("Cuenta Transitoria", max_length=50)
     cuenta_gasto = models.CharField(
         "Cuenta Gasto", max_length=50, blank=True, null=True
     )
