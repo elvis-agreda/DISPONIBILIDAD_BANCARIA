@@ -1,7 +1,6 @@
-# sap_sync/utils/common.py
-
 import re
-from datetime import date, datetime
+from datetime import date, datetime, timezone
+
 
 def sap_date_to_python(date_str) -> date | None:
     """
@@ -9,24 +8,24 @@ def sap_date_to_python(date_str) -> date | None:
     """
     if not date_str or str(date_str) == "00000000":
         return None
-        
+
     date_str = str(date_str).strip()
-    
+
     # Formato 1: OData v2 Timestamp (Ej: /Date(1643673600000)/)
     if date_str.startswith("/Date(") and date_str.endswith(")/"):
         try:
-            # Extraer solo los milisegundos numéricos
-            match = re.search(r'\d+', date_str)
+            match = re.search(r"\d+", date_str)
             if match:
                 ms = int(match.group())
-                return date.fromtimestamp(ms / 1000.0)
+                # CORRECCIÓN: Forzamos la creación del datetime en UTC y luego extraemos la fecha.
+                dt_utc = datetime.fromtimestamp(ms / 1000.0, tz=timezone.utc)
+                return dt_utc.date()
         except (ValueError, AttributeError, OSError):
             return None
 
     # Formato 2: Estándar ISO con guiones (Ej: 2024-01-31 o 2024-01-31T00:00:00)
     if "-" in date_str:
         try:
-            # Separamos en la 'T' por si viene con horas y tomamos solo la fecha
             return datetime.fromisoformat(date_str.split("T")[0]).date()
         except ValueError:
             pass
